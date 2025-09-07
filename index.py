@@ -16,12 +16,14 @@ logging.basicConfig(
 )
 
 class SimpleBilibiliReply:
-    def __init__(self, sessdata, bili_jct, self_uid, poll_interval=5, device_id):
+    def __init__(self, sessdata, bili_jct, self_uid, poll_interval=5):
         self.sessdata = sessdata
         self.bili_jct = bili_jct
         self.self_uid = self_uid
         self.poll_interval = poll_interval
-        self.device_id = device_id
+        
+        # 生成设备ID
+        self.device_id = "FCE16292-FE6A-4698-ABAF-67CD9C467844"
         
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
@@ -35,11 +37,11 @@ class SimpleBilibiliReply:
         
         # 设置自动回复关键词
         self.keyword_reply = {
-            "测试": "测试回复：自动回复机器人已启动～"
+            "创意工坊": "网站地址：https://steam.bzks.qzz.io\n说明：支持系统默认账号和个人账号登陆，可实时查看任务执行日志，可解析游戏的创意工坊内容，前提是使用的账号已购买该游戏，不然无法进行解析\n(机器人系统自动回复)"
         }
         
         self.processed_msg_ids = set()
-        
+        logging.info(f"================================================")
         logging.info(f"B站自动回复机器人初始化完成，用户UID: {self_uid}")
 
     def get_sessions(self) -> List[Dict]:
@@ -64,6 +66,48 @@ class SimpleBilibiliReply:
             logging.error(f"获取会话列表异常: {e}")
         
         return []
+
+    # 查询对方是否关注了我
+    def check_user_relation(self, target_uid: int) -> Optional[Dict]:
+        url = "https://api.bilibili.com/x/web-interface/relation"
+        params = {
+            "mid": target_uid  # 目标用户的UID
+        }
+        
+        try:
+            response = requests.get(url, params=params, headers=self.headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                logging.debug(f"关系检查API响应: {json.dumps(data, ensure_ascii=False)}")
+                
+                if data.get("code") == 0:
+                    return data.get("data", {})
+                else:
+                    logging.warning(f"关系检查API错误: {data.get('message')}")
+        except Exception as e:
+            logging.error(f"检查用户关系异常: {e}")
+        
+        return None
+
+    def is_following_me(self, target_uid: int) -> bool:
+        relation_data = self.check_user_relation(target_uid)
+        if not relation_data:
+            return False
+        
+        # 获取目标用户对我的关系
+        relation = relation_data.get("be_relation", {})
+        attribute = relation.get("attribute", 0)
+        
+        logging.debug(f"用户 {target_uid} 对我的关注状态: attribute={attribute}")
+        
+        # 检查目标用户是否关注了我
+        # attribute 为 2 或 6 表示关注了我
+        if attribute in [2, 6]:
+            logging.info(f"用户 {target_uid} 已关注您")
+            return True
+        else:
+            logging.info(f"用户 {target_uid} 未关注您")
+            return False
 
     def extract_message_content(self, message_data: Dict) -> Optional[str]:
         """从消息数据中提取文本内容"""
@@ -212,12 +256,19 @@ class SimpleBilibiliReply:
                     # 检查关键词
                     reply = self.check_keywords(message_text)
                     if reply:
-                        success = self.send_message(talker_id, reply)
-                        if success:
-                            self.processed_msg_ids.add(msg_id)
-                            logging.info(f"✓ 已处理消息 {msg_id}")
+                        # 检查对方是否关注了我
+                        if self.is_following_me(talker_id):
+                            success = self.send_message(talker_id, reply)
+                            if success:
+                                self.processed_msg_ids.add(msg_id)
+                                logging.info(f"✓ 已处理消息 {msg_id}")
+                            else:
+                                logging.warning(f"✗ 发送消息失败")
                         else:
-                            logging.warning(f"✗ 发送消息失败")
+                            logging.info(f"用户 {talker_id} 未关注您，不发送回复")
+                            # 标记为已处理，避免重复检查
+                            self.processed_msg_ids.add(msg_id)
+                            self.send_message(talker_id, "你还没有点点关注哦~，白嫖可耻！")
                     
                 except Exception as e:
                     logging.error(f"处理会话异常: {e}")
@@ -230,6 +281,7 @@ class SimpleBilibiliReply:
         """运行监听"""
         logging.info("B站私信自动回复机器人已启动")
         logging.info("按 Ctrl+C 可停止运行")
+        logging.info(f"================================================")
         
         try:
             while True:
@@ -243,18 +295,16 @@ class SimpleBilibiliReply:
 
 if __name__ == "__main__":
     # 更改为你的
-    SESSDATA = "" # SESSDATA
-    BILI_JCT = "" # bili_jct
-    SELF_UID = 123456789 # UID
-    DEVICE_ID = "" # device_id
+    SESSDATA = "cf3c14df%2C1764828257%2Cb7267%2A61CjCjMnSqI4MF8ayB-ffDp925KKNvBiQ-PyEohX6xMEfRQzvaeZfckscPzfElslzfrt8SVjR5dlhfSERQZGpMeGl4LUdmN1pkLS1XRVhLWWRhdGFfcHFuWHc1U2k0dE9yRVZudlNlekNYdkRVLUlWcW5kWk9DSnhUdTZoZXZPMjRWRDRRZDdSNmlnIIEC" # sessdata
+    BILI_JCT = "7f9b43888db51e24fc3c88fd001e315f" # bili_jct
+    SELF_UID = 2142524663  # 你的UID
     
     # 创建机器人实例
     bot = SimpleBilibiliReply(
         sessdata=SESSDATA,
         bili_jct=BILI_JCT,
         self_uid=SELF_UID,
-        poll_interval=5,
-        device_id=DEVICE_ID
+        poll_interval=5
     )
     
     # 运行机器人
