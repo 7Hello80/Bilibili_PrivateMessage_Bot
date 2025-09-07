@@ -16,7 +16,7 @@ logging.basicConfig(
 )
 
 class SimpleBilibiliReply:
-    def __init__(self, sessdata, bili_jct, self_uid, poll_interval=5, device_id):
+    def __init__(self, sessdata, bili_jct, self_uid, device_id, poll_interval=5):
         self.sessdata = sessdata
         self.bili_jct = bili_jct
         self.self_uid = self_uid
@@ -305,8 +305,8 @@ if __name__ == "__main__":
         sessdata=SESSDATA,
         bili_jct=BILI_JCT,
         self_uid=SELF_UID,
+        device_id=DEVICE_ID,
         poll_interval=5,
-        device_id=DEVICE_ID
     )
     
     # 运行机器人
