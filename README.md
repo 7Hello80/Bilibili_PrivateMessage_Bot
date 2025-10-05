@@ -37,10 +37,13 @@ https://github.com/7Hello80/Bilibili_PrivateMessage_Bot
 
 2. 安装所需的Python依赖
 ```bash
-pip install requests uuid json
+pip install requests uuid json psutil flask colorama
 ```
 
 3. 启动服务
 ```bash
-python3 index.py
+python3 web_panel.py / python web_panel.py
 ```
+
+面板默认账号密码：admin / admin123
+登录地址：http://localhost:5000
