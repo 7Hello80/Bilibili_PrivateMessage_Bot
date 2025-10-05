@@ -4,16 +4,46 @@ import time
 import logging
 import uuid
 from typing import Dict, List, Optional, Set
+import colorama
+from colorama import Fore, Back, Style
+import sys
 
-# 配置日志
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("bilibili_auto_reply.log"),
-        logging.StreamHandler()
-    ]
-)
+# 初始化colorama
+colorama.init(autoreset=True)
+
+SESSDATA = "cf3c14df%2C1764828257%2Cb7267%2A61CjCjMnSqI4MF8ayB-ffDp925KKNvBiQ-PyEohX6xMEfRQzvaeZfckscPzfElslzfrt8SVjR5dlhfSERQZGpMeGl4LUdmN1pkLS1XRVhLWWRhdGFfcHFuWHc1U2k0dE9yRVZudlNlekNYdkRVLUlWcW5kWk9DSnhUdTZoZXZPMjRWRDRRZDdSNmlnIIEC" # sessdata
+BILI_JCT = "7f9b43888db51e24fc3c88fd001e315f" # bili_jct
+SELF_UID = 2142524663  # 你的UID
+DEVICE_ID = "FCE16292-FE6A-4698-ABAF-67CD9C467844"
+
+# 检查配置
+def inspect_config():
+    print(f"{Fore.BLUE}正在检查配置是否正确...")
+    if SESSDATA == "":
+        print(f"{Fore.RED}✗ {Fore.RED}SESSDATA未配置")
+        return False
+    
+    print(f"{Fore.GREEN}✓ {Fore.BLUE}SESSDATA正确")
+    
+    if BILI_JCT == "":
+        print(f"{Fore.RED}✗ {Fore.RED}BILI_JCT未配置")
+        return False
+    
+    print(f"{Fore.GREEN}✓ {Fore.BLUE}BILI_JCT正确")
+    
+    if SELF_UID == 0:
+        print(f"{Fore.RED}✗ {Fore.RED}SELF_UID未配置")
+        return False
+    
+    print(f"{Fore.GREEN}✓ {Fore.BLUE}SELF_UID正确")
+    
+    if DEVICE_ID == "":
+        print(f"{Fore.RED}✗ {Fore.RED}DEVICE_ID未配置")
+        return False
+    
+    print(f"{Fore.GREEN}✓ {Fore.BLUE}DEVICE_ID正确")
+    print(f"{Fore.GREEN}✓ {Fore.GREEN}检查完成，开始运行\n")
+    return True
 
 class SimpleBilibiliReply:
     def __init__(self, sessdata, bili_jct, self_uid, device_id, poll_interval=5):
@@ -37,13 +67,20 @@ class SimpleBilibiliReply:
         
         # 设置自动回复关键词
         self.keyword_reply = {
-            "你好": "你好"
+            "创意工坊": "网站地址：https://steam.bzks.qzz.io\n说明：支持系统默认账号和个人账号登陆，可实时查看任务执行日志，可解析游戏的创意工坊内容，前提是使用的账号已购买该游戏，不然无法进行解析",
+            "三连求": "网站地址：https://steam.bzks.qzz.io\n说明：支持系统默认账号和个人账号登陆，可实时查看任务执行日志，可解析游戏的创意工坊内容，前提是使用的账号已购买该游戏，不然无法进行解析",
+            "你好": "你好！"
         }
         
         self.processed_msg_ids = set()
-        logging.info(f"================================================")
-        logging.info(f"B站自动回复机器人初始化完成，用户UID: {self_uid}")
-
+        print(f"{Fore.GREEN}✓ {Fore.BLUE}哔哩哔哩私信自动回复机器人启动成功")
+        print(f"{Fore.GREEN}程序名称: {Fore.WHITE}哔哩哔哩私信机器人")
+        print(f"{Fore.GREEN}版本号: {Fore.WHITE}v1.0.2")
+        print(f"{Fore.GREEN}作者: {Fore.WHITE}淡意往事")
+        print(f"{Fore.GREEN}哔哩哔哩主页: {Fore.WHITE}https://b23.tv/tq8hoKu")
+        print(f"{Fore.GREEN}Github: {Fore.WHITE}https://github.com/7hello80")
+        print(f"{Fore.GREEN}启动时间: {Fore.WHITE}{time.strftime('%Y-%m-%d %H:%M:%S')}")
+    
     def get_sessions(self) -> List[Dict]:
         """获取会话列表"""
         url = "https://api.vc.bilibili.com/session_svr/v1/session_svr/get_sessions"
@@ -61,9 +98,9 @@ class SimpleBilibiliReply:
                 if data.get("code") == 0:
                     return data.get("data", {}).get("session_list", [])
                 else:
-                    logging.warning(f"API错误: {data.get('message')}")
+                    print(f"{Fore.RED}✗ API错误: {data.get('message')}")
         except Exception as e:
-            logging.error(f"获取会话列表异常: {e}")
+            print(f"{Fore.RED}✗ 获取会话列表异常: {e}")
         
         return []
 
@@ -78,14 +115,14 @@ class SimpleBilibiliReply:
             response = requests.get(url, params=params, headers=self.headers, timeout=10)
             if response.status_code == 200:
                 data = response.json()
-                logging.debug(f"关系检查API响应: {json.dumps(data, ensure_ascii=False)}")
+                print(f"{Fore.GREEN}✓ 关系检查API响应: {Fore.MAGENTA}{json.dumps(data, ensure_ascii=False)}")
                 
                 if data.get("code") == 0:
                     return data.get("data", {})
                 else:
-                    logging.warning(f"关系检查API错误: {data.get('message')}")
+                    print(f"{Fore.RED}✗ 关系检查API错误: {Fore.MAGENTA}{data.get('message')}")
         except Exception as e:
-            logging.error(f"检查用户关系异常: {e}")
+            print(f"{Fore.RED}✗ 检查用户关系异常: {Fore.MAGENTA}{e}")
         
         return None
 
@@ -98,15 +135,15 @@ class SimpleBilibiliReply:
         relation = relation_data.get("be_relation", {})
         attribute = relation.get("attribute", 0)
         
-        logging.debug(f"用户 {target_uid} 对我的关注状态: attribute={attribute}")
+        print(f"{Fore.MAGENTA}用户 {target_uid} 对我的关注状态: attribute={attribute}")
         
         # 检查目标用户是否关注了我
         # attribute 为 2 或 6 表示关注了我
         if attribute in [2, 6]:
-            logging.info(f"用户 {target_uid} 已关注您")
+            print(f"{Fore.MAGENTA}用户 {target_uid} 已关注您")
             return True
         else:
-            logging.info(f"用户 {target_uid} 未关注您")
+            print(f"{Fore.RED}✗ 用户 {target_uid} 未关注您")
             return False
 
     def extract_message_content(self, message_data: Dict) -> Optional[str]:
@@ -183,25 +220,25 @@ class SimpleBilibiliReply:
                 timeout=10
             )
             
-            logging.debug(f"发送消息响应状态: {response.status_code}")
+            print(f"{Fore.GREEN}✓ 发送消息响应状态: {Fore.MAGENTA}{response.status_code}")
             
             if response.status_code == 200:
                 data = response.json()
-                logging.debug(f"发送消息响应内容: {data}")
+                print(f"{Fore.GREEN}✓ 发送消息响应内容: {Fore.MAGENTA}{data}")
                 
                 if data.get("code") == 0:
-                    logging.info(f"✓ 成功发送消息给 {receiver_id}")
+                    print(f"{Fore.GREEN}✓ 成功发送消息给 {Fore.MAGENTA}{receiver_id}")
                     return True
                 else:
-                    logging.warning(f"发送失败: {data.get('message')} (代码: {data.get('code')})")
+                    print(f"{Fore.RED}✗ 发送失败: {Fore.MAGENTA}{data.get('message')} (代码: {data.get('code')})")
                     # 如果是消息重复发送错误，也标记为成功
                     if data.get("code") in [-400, 1000]:
                         return True
             else:
-                logging.warning(f"HTTP错误: {response.status_code}")
+                print(f"{Fore.RED}✗ HTTP错误: {Fore.MAGENTA}{response.status_code}")
                 
         except Exception as e:
-            logging.error(f"发送消息异常: {e}")
+            print(f"{Fore.RED}✗ 发送消息异常: {Fore.MAGENTA}{e}")
         
         return False
 
@@ -251,7 +288,7 @@ class SimpleBilibiliReply:
                     if not message_text:
                         continue
                     
-                    logging.info(f"收到来自 {talker_id} 的消息: {message_text}")
+                    print(f"{Fore.GREEN}✓ 收到来自 {Fore.MAGENTA}{talker_id} {Fore.GREEN}的消息: {Fore.MAGENTA}{message_text}")
                     
                     # 检查关键词
                     reply = self.check_keywords(message_text)
@@ -261,27 +298,25 @@ class SimpleBilibiliReply:
                             success = self.send_message(talker_id, reply)
                             if success:
                                 self.processed_msg_ids.add(msg_id)
-                                logging.info(f"✓ 已处理消息 {msg_id}")
+                                print(f"{Fore.GREEN}✓ 已处理消息 {Fore.MAGENTA}{msg_id}")
                             else:
-                                logging.warning(f"✗ 发送消息失败")
+                                print(f"{Fore.RED}✗  发送消息失败")
                         else:
-                            logging.info(f"用户 {talker_id} 未关注您，不发送回复")
+                            print(f"{Fore.RED}✗ 用户 {talker_id} 未关注您，不发送回复")
                             # 标记为已处理，避免重复检查
                             self.processed_msg_ids.add(msg_id)
                             self.send_message(talker_id, "你还没有点点关注哦~，白嫖可耻！")
                     
                 except Exception as e:
-                    logging.error(f"处理会话异常: {e}")
+                    print(f"{Fore.RED}✗ 处理会话异常: {Fore.MAGENTA}{e}")
                     continue
                     
         except Exception as e:
-            logging.error(f"处理消息主循环异常: {e}")
+            print(f"{Fore.RED}✗ 处理消息主循环异常: {Fore.MAGENTA}{e}")
 
     def run(self):
         """运行监听"""
-        logging.info("B站私信自动回复机器人已启动")
-        logging.info("按 Ctrl+C 可停止运行")
-        logging.info(f"================================================")
+        print(f"{Fore.GREEN}✓ 按 Ctrl+C 可停止运行\n\n")
         
         try:
             while True:
@@ -289,25 +324,23 @@ class SimpleBilibiliReply:
                 time.sleep(self.poll_interval)
                 
         except KeyboardInterrupt:
-            logging.info("用户手动停止程序")
+            print(f"{Fore.GREEN}✓ 用户手动停止程序")
         except Exception as e:
-            logging.error(f"程序运行异常: {e}")
+            print(f"{Fore.RED}✗ 程序运行异常: {Fore.MAGENTA}{e}")
 
 if __name__ == "__main__":
-    # 更改为你的
-    SESSDATA = "" # sessdata
-    BILI_JCT = "" # bili_jct
-    SELF_UID = 123456789  # 你的UID
-    DEVICE_ID = ""
-    
-    # 创建机器人实例
-    bot = SimpleBilibiliReply(
-        sessdata=SESSDATA,
-        bili_jct=BILI_JCT,
-        self_uid=SELF_UID,
-        device_id=DEVICE_ID,
-        poll_interval=5,
-    )
-    
-    # 运行机器人
-    bot.run()
+    is_config = inspect_config()
+    if is_config:
+        # 创建机器人实例
+        bot = SimpleBilibiliReply(
+            sessdata=SESSDATA,
+            bili_jct=BILI_JCT,
+            self_uid=SELF_UID,
+            device_id=DEVICE_ID,
+            poll_interval=5,
+        )
+        
+        # 运行机器人
+        bot.run()
+    else:
+        print(f"{Fore.RED}✗ 配置错误")
