@@ -114,6 +114,8 @@ class LogHandler:
         """获取最新的日志"""
         return self.logs[-limit:] if self.logs else []
 
+log_handler = LogHandler(LOG_FILE)
+
 # 登录装饰器
 def login_required(f):
     def decorated_function(*args, **kwargs):
