@@ -7,14 +7,27 @@ from typing import Dict, List, Optional, Set
 import colorama
 from colorama import Fore, Back, Style
 import sys
+import os
+import ConfigManage
+import init
+
+config = ConfigManage.ConfigManager("config.json")
 
 # 初始化colorama
 colorama.init(autoreset=True)
 
-SESSDATA = "" # sessdata
-BILI_JCT = "" # bili_jct
-SELF_UID = 0  # 你的UID
-DEVICE_ID = ""
+# 账号配置信息
+SESSDATA = config.get("config")["sessdata"]
+BILI_JCT = config.get("config")["bili_jct"]
+SELF_UID = config.get("config")["self_uid"]
+DEVICE_ID = config.get("config")["device_id"]
+
+# 清理内容
+def clean_screen():
+    if os.name == "nt":
+        os.system("cls")
+    else:
+        os.system("clear")
 
 # 检查配置
 def inspect_config():
@@ -43,6 +56,8 @@ def inspect_config():
     
     print(f"{Fore.GREEN}✓ {Fore.BLUE}DEVICE_ID正确")
     print(f"{Fore.GREEN}✓ {Fore.GREEN}检查完成，开始运行\n")
+    time.sleep(0.5)
+    clean_screen()
     return True
 
 class SimpleBilibiliReply:
@@ -66,9 +81,7 @@ class SimpleBilibiliReply:
         }
         
         # 设置自动回复关键词
-        self.keyword_reply = {
-            "你好": "你好！"
-        }
+        self.keyword_reply = config.get("keyword")
         
         self.processed_msg_ids = set()
         print(f"{Fore.GREEN}✓ {Fore.BLUE}哔哩哔哩私信自动回复机器人启动成功")
@@ -314,7 +327,8 @@ class SimpleBilibiliReply:
 
     def run(self):
         """运行监听"""
-        print(f"{Fore.GREEN}✓ 按 Ctrl+C 可停止运行\n\n")
+        print(f"{Fore.GREEN}→ 按 Ctrl+C 可停止运行\n")
+        print(f"{Fore.GREEN}项目运行日志：")
         
         try:
             while True:
@@ -327,6 +341,7 @@ class SimpleBilibiliReply:
             print(f"{Fore.RED}✗ 程序运行异常: {Fore.MAGENTA}{e}")
 
 if __name__ == "__main__":
+    init.init_manage()
     is_config = inspect_config()
     if is_config:
         # 创建机器人实例
