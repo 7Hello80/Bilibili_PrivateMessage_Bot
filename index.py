@@ -67,15 +67,13 @@ class SimpleBilibiliReply:
         
         # 设置自动回复关键词
         self.keyword_reply = {
-            "创意工坊": "网站地址：https://steam.bzks.qzz.io\n说明：支持系统默认账号和个人账号登陆，可实时查看任务执行日志，可解析游戏的创意工坊内容，前提是使用的账号已购买该游戏，不然无法进行解析",
-            "三连求": "网站地址：https://steam.bzks.qzz.io\n说明：支持系统默认账号和个人账号登陆，可实时查看任务执行日志，可解析游戏的创意工坊内容，前提是使用的账号已购买该游戏，不然无法进行解析",
             "你好": "你好！"
         }
         
         self.processed_msg_ids = set()
         print(f"{Fore.GREEN}✓ {Fore.BLUE}哔哩哔哩私信自动回复机器人启动成功")
         print(f"{Fore.GREEN}程序名称: {Fore.WHITE}哔哩哔哩私信机器人")
-        print(f"{Fore.GREEN}版本号: {Fore.WHITE}v1.0.2")
+        print(f"{Fore.GREEN}版本号: {Fore.WHITE}v1.0.1")
         print(f"{Fore.GREEN}作者: {Fore.WHITE}淡意往事")
         print(f"{Fore.GREEN}哔哩哔哩主页: {Fore.WHITE}https://b23.tv/tq8hoKu")
         print(f"{Fore.GREEN}Github: {Fore.WHITE}https://github.com/7hello80")
