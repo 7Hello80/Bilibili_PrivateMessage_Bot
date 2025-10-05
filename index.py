@@ -37,7 +37,7 @@ class SimpleBilibiliReply:
         
         # 设置自动回复关键词
         self.keyword_reply = {
-            "创意工坊": "网站地址：https://steam.bzks.qzz.io\n说明：支持系统默认账号和个人账号登陆，可实时查看任务执行日志，可解析游戏的创意工坊内容，前提是使用的账号已购买该游戏，不然无法进行解析\n(机器人系统自动回复)"
+            "你好": "你好"
         }
         
         self.processed_msg_ids = set()
