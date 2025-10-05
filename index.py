@@ -11,10 +11,10 @@ import sys
 # 初始化colorama
 colorama.init(autoreset=True)
 
-SESSDATA = "cf3c14df%2C1764828257%2Cb7267%2A61CjCjMnSqI4MF8ayB-ffDp925KKNvBiQ-PyEohX6xMEfRQzvaeZfckscPzfElslzfrt8SVjR5dlhfSERQZGpMeGl4LUdmN1pkLS1XRVhLWWRhdGFfcHFuWHc1U2k0dE9yRVZudlNlekNYdkRVLUlWcW5kWk9DSnhUdTZoZXZPMjRWRDRRZDdSNmlnIIEC" # sessdata
-BILI_JCT = "7f9b43888db51e24fc3c88fd001e315f" # bili_jct
-SELF_UID = 2142524663  # 你的UID
-DEVICE_ID = "FCE16292-FE6A-4698-ABAF-67CD9C467844"
+SESSDATA = "" # sessdata
+BILI_JCT = "" # bili_jct
+SELF_UID = 0  # 你的UID
+DEVICE_ID = ""
 
 # 检查配置
 def inspect_config():
