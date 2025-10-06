@@ -113,7 +113,7 @@ class LogHandler:
     def get_logs(self, limit=100):
         """获取最新的日志"""
         return self.logs[-limit:] if self.logs else []
-
+        
 log_handler = LogHandler(LOG_FILE)
 
 # 登录装饰器
@@ -189,11 +189,11 @@ def start_bot():
     
     try:
         # 检查Python解释器路径
-        python_path = 'python'
-        if os.path.exists('.venv/bin/python'):
-            python_path = '.venv/bin/python'
-        elif os.path.exists('venv/bin/python'):
-            python_path = 'venv/bin/python'
+        python_path = 'python3'
+        if os.path.exists('.venv/bin/python3'):
+            python_path = '.venv/bin/python3'
+        elif os.path.exists('venv/bin/python3'):
+            python_path = 'venv/bin/python3'
         
         # 启动机器人进程
         bot_process = subprocess.Popen(
@@ -259,9 +259,7 @@ def update_config():
     try:
         config_data = request.json
         
-        # 更新配置
-        for key, value in config_data.items():
-            bot_config.set(key, value)
+        bot_config.set("config", config_data)
         
         log_handler.add_log("机器人配置已更新")
         return jsonify({'success': True, 'message': '配置更新成功'})
@@ -300,12 +298,27 @@ def add_keyword():
         
         # 获取当前关键词
         current_keywords = bot_config.get("keyword", {})
-        current_keywords[keyword] = reply
+        
+        # 检查回复内容中是否包含任何现有关键词
+        processed_reply = reply
+        for existing_keyword in current_keywords.keys():
+            if existing_keyword in processed_reply:
+                # 在关键词的每个字符间添加零宽空格
+                protected_keyword = '\u200b'.join(existing_keyword)
+                processed_reply = processed_reply.replace(existing_keyword, protected_keyword)
+        
+        # 也检查当前要添加的关键词是否在回复中
+        if keyword in processed_reply:
+            protected_keyword = '\u200b'.join(keyword)
+            processed_reply = processed_reply.replace(keyword, protected_keyword)
+        
+        # 使用处理后的回复内容
+        current_keywords[keyword] = processed_reply
         
         # 更新配置
         bot_config.set("keyword", current_keywords)
         
-        log_handler.add_log(f"添加关键词: {keyword} -> {reply}")
+        log_handler.add_log(f"添加关键词: {keyword} -> {processed_reply}")
         return jsonify({'success': True, 'message': '关键词添加成功'})
     
     except Exception as e:
@@ -1086,11 +1099,6 @@ function fetchBotStatus() {
             // 更新系统信息
             document.getElementById('log-count').textContent = keywordCountValue;
             
-            // 如果是在配置页面，更新表单数据
-            if (document.getElementById('config').style.display !== 'none') {
-                updateConfigForm(data.config);
-            }
-            
             // 如果是在关键词页面，更新关键词列表
             if (document.getElementById('keywords').style.display !== 'none') {
                 updateKeywordsList(data.keywords);
@@ -1115,6 +1123,21 @@ function updateConfigForm(config) {
             }
         }
     }
+}
+
+function config() {
+    fetch('/api/bot_status')
+        .then(response => response.json())
+        .then(data => {
+            updateConfigForm(data.config);
+        })
+        .catch(error => {
+            console.error('获取机器人状态失败:', error);
+            const statusText = document.getElementById('status-text');
+            if (statusText) {
+                statusText.innerHTML = '<span class="text-red-600">获取状态失败</span>';
+            }
+        });
 }
 
 // 更新关键词列表
@@ -1362,6 +1385,8 @@ document.addEventListener('DOMContentLoaded', function() {
     // 开始状态轮询
     setInterval(fetchBotStatus, 3000);
     fetchBotStatus();
+    
+    config()
     
     // 初始化运行时间
     updateUptime();
