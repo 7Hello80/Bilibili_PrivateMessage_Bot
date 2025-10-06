@@ -7,7 +7,6 @@ from typing import Dict, List, Optional, Set
 import colorama
 from colorama import Fore, Back, Style
 import sys
-import os
 import ConfigManage
 import init
 
@@ -16,18 +15,10 @@ config = ConfigManage.ConfigManager("config.json")
 # 初始化colorama
 colorama.init(autoreset=True)
 
-# 账号配置信息
 SESSDATA = config.get("config")["sessdata"]
 BILI_JCT = config.get("config")["bili_jct"]
 SELF_UID = config.get("config")["self_uid"]
 DEVICE_ID = config.get("config")["device_id"]
-
-# 清理内容
-def clean_screen():
-    if os.name == "nt":
-        os.system("cls")
-    else:
-        os.system("clear")
 
 # 检查配置
 def inspect_config():
@@ -56,8 +47,6 @@ def inspect_config():
     
     print(f"{Fore.GREEN}✓ {Fore.BLUE}DEVICE_ID正确")
     print(f"{Fore.GREEN}✓ {Fore.GREEN}检查完成，开始运行\n")
-    time.sleep(0.5)
-    clean_screen()
     return True
 
 class SimpleBilibiliReply:
@@ -86,7 +75,7 @@ class SimpleBilibiliReply:
         self.processed_msg_ids = set()
         print(f"{Fore.GREEN}✓ {Fore.BLUE}哔哩哔哩私信自动回复机器人启动成功")
         print(f"{Fore.GREEN}程序名称: {Fore.WHITE}哔哩哔哩私信机器人")
-        print(f"{Fore.GREEN}版本号: {Fore.WHITE}v1.0.2")
+        print(f"{Fore.GREEN}版本号: {Fore.WHITE}v1.0.1")
         print(f"{Fore.GREEN}作者: {Fore.WHITE}淡意往事")
         print(f"{Fore.GREEN}哔哩哔哩主页: {Fore.WHITE}https://b23.tv/tq8hoKu")
         print(f"{Fore.GREEN}Github: {Fore.WHITE}https://github.com/7hello80")
@@ -307,6 +296,7 @@ class SimpleBilibiliReply:
                         # 检查对方是否关注了我
                         if self.is_following_me(talker_id):
                             success = self.send_message(talker_id, reply)
+                            print(f"{talker_id} - {reply}")
                             if success:
                                 self.processed_msg_ids.add(msg_id)
                                 print(f"{Fore.GREEN}✓ 已处理消息 {Fore.MAGENTA}{msg_id}")
@@ -327,7 +317,7 @@ class SimpleBilibiliReply:
 
     def run(self):
         """运行监听"""
-        print(f"{Fore.GREEN}→ 按 Ctrl+C 可停止运行\n")
+        print(f"{Fore.GREEN}✓ 按 Ctrl+C 可停止运行\n")
         print(f"{Fore.GREEN}项目运行日志：")
         
         try:
