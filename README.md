@@ -10,6 +10,10 @@ Bilibili PrivateMessage Bot (后文简称BPMB) 这是一个基于Bilibili私信A
 
 如果你觉得好的话可以给我点个Stars吗？
 
+功能
+[x]
+
+
 ## 参数配置
 
 1. SESSDATA
