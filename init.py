@@ -15,7 +15,8 @@ def init_manage():
             },
             "keyword": {
                 "测试运行": "自动回复系统正常！"
-            }
+            },
+													"at_user": False
         }
         
         # 写入JSON文件
