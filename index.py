@@ -85,7 +85,7 @@ class SimpleBilibiliReply:
         self.processed_msg_ids = set()
         print(f"{Fore.GREEN}✓ {Fore.BLUE}哔哩哔哩私信自动回复机器人启动成功")
         print(f"{Fore.GREEN}程序名称: {Fore.WHITE}哔哩哔哩私信机器人")
-        print(f"{Fore.GREEN}版本号: {Fore.WHITE}v1.0.2")
+        print(f"{Fore.GREEN}版本号: {Fore.WHITE}v1.0.3")
         print(f"{Fore.GREEN}作者: {Fore.WHITE}淡意往事")
         print(f"{Fore.GREEN}哔哩哔哩主页: {Fore.WHITE}https://b23.tv/tq8hoKu")
         print(f"{Fore.GREEN}Github: {Fore.WHITE}https://github.com/7hello80")
