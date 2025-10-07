@@ -9,7 +9,9 @@ from colorama import Fore, Back, Style
 import sys
 import ConfigManage
 import init
+import os
 
+init.init_manage()
 config = ConfigManage.ConfigManager("config.json")
 
 # 初始化colorama
@@ -19,6 +21,12 @@ SESSDATA = config.get("config")["sessdata"]
 BILI_JCT = config.get("config")["bili_jct"]
 SELF_UID = config.get("config")["self_uid"]
 DEVICE_ID = config.get("config")["device_id"]
+
+def clean_screen():
+    if os.name == "nt":
+        os.system("cls")
+    else:
+        os.system("clear")
 
 # 检查配置
 def inspect_config():
@@ -47,6 +55,8 @@ def inspect_config():
     
     print(f"{Fore.GREEN}✓ {Fore.BLUE}DEVICE_ID正确")
     print(f"{Fore.GREEN}✓ {Fore.GREEN}检查完成，开始运行\n")
+    time.sleep(0.5)
+    clean_screen()
     return True
 
 class SimpleBilibiliReply:
@@ -103,6 +113,26 @@ class SimpleBilibiliReply:
             print(f"{Fore.RED}✗ 获取会话列表异常: {e}")
         
         return []
+
+    def get_userName(self, mid: int) -> Optional[Dict]:
+        url = "https://api.bilibili.com/x/web-interface/card"
+        params = {
+            "mid": mid
+        }
+        
+        try:
+            response = requests.get(url, params, headers=self.headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data.get("code") == 0:
+                    return data.get("data", {})
+                else:
+                    print(f"{Fore.RED}✗ 检索失败")
+        except Exception as e:
+            print(f"{Fore.RED}✗ 获取失败: {e}")
+        
+        return None
 
     # 查询对方是否关注了我
     def check_user_relation(self, target_uid: int) -> Optional[Dict]:
@@ -163,6 +193,8 @@ class SimpleBilibiliReply:
 
     def check_keywords(self, message: str) -> Optional[str]:
         """检查消息是否包含关键词"""
+        config = ConfigManage.ConfigManager("config.json")
+        self.keyword_reply = config.get("keyword")
         if not message:
             return None
             
@@ -181,8 +213,13 @@ class SimpleBilibiliReply:
         # 生成时间戳和随机参数
         timestamp = int(time.time())
         
-        # 构建消息内容
-        content_json = {"content": message}
+        config = ConfigManage.ConfigManager("config.json")
+        
+        if config.get("at_user") == True:
+            userinfo = self.get_userName(receiver_id)
+            content_json = {"content": message.replace("[at_user]", userinfo.get("card")["name"])}
+        else:
+            content_json = {"content": message}
         
         # 构建表单数据（按照您提供的格式）
         form_data = {
@@ -271,7 +308,7 @@ class SimpleBilibiliReply:
                     timestamp = last_msg.get("timestamp", 0)
                     
                     # 跳过自己发送的消息
-                    if sender_uid == self.self_uid:
+                    if sender_uid == int(self.self_uid):
                         continue
                     
                     # 检查是否已经处理过这条消息
@@ -296,7 +333,6 @@ class SimpleBilibiliReply:
                         # 检查对方是否关注了我
                         if self.is_following_me(talker_id):
                             success = self.send_message(talker_id, reply)
-                            print(f"{talker_id} - {reply}")
                             if success:
                                 self.processed_msg_ids.add(msg_id)
                                 print(f"{Fore.GREEN}✓ 已处理消息 {Fore.MAGENTA}{msg_id}")
@@ -307,6 +343,7 @@ class SimpleBilibiliReply:
                             # 标记为已处理，避免重复检查
                             self.processed_msg_ids.add(msg_id)
                             self.send_message(talker_id, "你还没有点点关注哦~，白嫖可耻！")
+                            
                     
                 except Exception as e:
                     print(f"{Fore.RED}✗ 处理会话异常: {Fore.MAGENTA}{e}")
