@@ -113,7 +113,25 @@ class LogHandler:
     def get_logs(self, limit=100):
         """获取最新的日志"""
         return self.logs[-limit:] if self.logs else []
-        
+    
+    def clear_logs(self):
+        """清除所有日志"""
+        try:
+            # 清空内存中的日志
+            self.logs = []
+            
+            # 清空日志文件
+            with open(self.log_file, 'w', encoding='utf-8') as f:
+                f.write(f"Logs cleared at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            
+            # 添加一条清除记录
+            self.add_log("日志已被管理员清除", "INFO")
+            return True
+        except Exception as e:
+            logging.error(f"清除日志失败: {str(e)}")
+            return False
+
+# 初始化日志处理器
 log_handler = LogHandler(LOG_FILE)
 
 # 登录装饰器
@@ -175,7 +193,8 @@ def get_bot_status():
     return jsonify({
         'running': is_bot_running,
         'config': bot_config.get("config", {}),
-        'keywords': bot_config.get("keyword", {})
+        'keywords': bot_config.get("keyword", {}),
+        'at_user': bot_config.get("at_user", False)
     })
 
 @app.route('/api/start_bot', methods=['POST'])
@@ -285,6 +304,24 @@ def update_keywords():
         log_handler.add_log(f"关键词更新失败: {str(e)}", "ERROR")
         return jsonify({'success': False, 'message': f'更新失败: {str(e)}'})
 
+@app.route('/api/update_atuser', methods=['POST'])
+@login_required
+def update_atuser():
+    """更新是否at用户"""
+    try:
+        value = request.json.get("at_user")
+        if value is None:
+            return jsonify({"success": False, "message": "值不能为空"})
+            
+        bot_config.set("at_user", value)
+        
+        log_handler.add_log(f"艾特用户设置已更新: {'开启' if value else '关闭'}")
+        return jsonify({'success': True, 'message': '艾特用户设置更新成功'})
+    
+    except Exception as e:
+        log_handler.add_log(f"艾特用户设置更新失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'更新失败: {str(e)}'})
+
 @app.route('/api/add_keyword', methods=['POST'])
 @login_required
 def add_keyword():
@@ -358,6 +395,21 @@ def get_logs():
     limit = request.args.get('limit', 100, type=int)
     logs = log_handler.get_logs(limit)
     return jsonify({'logs': logs})
+
+@app.route('/api/clear_logs', methods=['POST'])
+@login_required
+def clear_logs():
+    """清除所有日志"""
+    try:
+        if log_handler.clear_logs():
+            log_handler.add_log("管理员清除了所有日志", "INFO")
+            return jsonify({'success': True, 'message': '日志清除成功'})
+        else:
+            return jsonify({'success': False, 'message': '日志清除失败'})
+    
+    except Exception as e:
+        log_handler.add_log(f"日志清除失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'清除失败: {str(e)}'})
 
 @app.route('/api/update_admin', methods=['POST'])
 @login_required
@@ -474,6 +526,52 @@ def create_templates():
             border-left-color: #f59e0b;
             background-color: #fffbeb;
         }
+        
+        /* 开关样式 */
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 60px;
+            height: 34px;
+        }
+        
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 34px;
+        }
+        
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        
+        input:checked + .slider {
+            background-color: #0ea5e9;
+        }
+        
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
     </style>
 </head>
 <body class="bg-gray-50 font-sans">
@@ -488,65 +586,64 @@ def create_templates():
         f.write('''{% extends "base.html" %}
 
 {% block content %}
-<div class="min-h-screen flex items-center justify-center gradient-bg py-12 px-4 sm:px-6 lg:px-8">
+<div class="min-h-screen bg-gray-50 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
     <div class="max-w-md w-full space-y-8">
-        <div class="bg-white rounded-2xl shadow-xl p-8">
-            <div class="text-center">
-                <div class="mx-auto h-16 w-16 bg-bilibili rounded-full flex items-center justify-center">
-                    <i class="fa fa-robot text-white text-2xl"></i>
-                </div>
-                <h2 class="mt-6 text-3xl font-bold text-gray-900">
+        <div class="bg-white py-8 px-6 shadow rounded-xl sm:px-10 border border-gray-100">
+            <!-- 头部 -->
+            <div class="text-center mb-8">
+                <h2 class="text-3xl font-bold text-gray-900">
                     B站私信机器人
                 </h2>
-                <p class="mt-2 text-sm text-gray-600">
+                <p class="mt-2 text-gray-600">
                     控制面板登录
                 </p>
             </div>
-            <form class="mt-8 space-y-6" method="POST">
+
+            <!-- 登录表单 -->
+            <form class="space-y-6" method="POST">
+                <!-- 错误提示 -->
                 {% if error %}
-                <div class="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg flex items-center">
-                    <i class="fa fa-exclamation-circle mr-2"></i>
-                    {{ error }}
+                <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center">
+                    <i class="fa fa-exclamation-circle mr-3"></i>
+                    <span class="font-medium">{{ error }}</span>
                 </div>
                 {% endif %}
-                
-                <div class="space-y-4">
-                    <div>
-                        <label for="username" class="block text-sm font-medium text-gray-700 mb-2">用户名</label>
-                        <div class="relative">
-                            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                <i class="fa fa-user text-gray-400"></i>
-                            </div>
-                            <input id="username" name="username" type="text" required 
-                                   class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
-                                   placeholder="请输入用户名">
+
+                <!-- 用户名输入 -->
+                <div>
+                    <label for="username" class="block text-sm font-medium text-gray-700 mb-2">用户名</label>
+                    <div class="mt-1 relative rounded-md shadow-sm">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <i class="fa fa-user text-gray-400"></i>
                         </div>
-                    </div>
-                    <div>
-                        <label for="password" class="block text-sm font-medium text-gray-700 mb-2">密码</label>
-                        <div class="relative">
-                            <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                                <i class="fa fa-lock text-gray-400"></i>
-                            </div>
-                            <input id="password" name="password" type="password" required 
-                                   class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
-                                   placeholder="请输入密码">
-                        </div>
+                        <input id="username" name="username" type="text" required
+                               class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                               placeholder="请输入用户名">
                     </div>
                 </div>
 
+                <!-- 密码输入 -->
                 <div>
-                    <button type="submit" 
-                            class="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-bilibili hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition transform hover:-translate-y-0.5">
+                    <label for="password" class="block text-sm font-medium text-gray-700 mb-2">密码</label>
+                    <div class="mt-1 relative rounded-md shadow-sm">
+                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                            <i class="fa fa-lock text-gray-400"></i>
+                        </div>
+                        <input id="password" name="password" type="password" required
+                               class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                               placeholder="请输入密码">
+                    </div>
+                </div>
+
+                <!-- 登录按钮 -->
+                <div>
+                    <button type="submit"
+                            class="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200 shadow-md hover:shadow-lg">
                         <span class="absolute left-0 inset-y-0 flex items-center pl-3">
-                            <i class="fa fa-sign-in-alt text-blue-300 group-hover:text-blue-200"></i>
+                            <i class="fa fa-sign-in-alt text-blue-200 group-hover:text-blue-100"></i>
                         </span>
                         登录系统
                     </button>
-                </div>
-                
-                <div class="text-center text-sm text-gray-500">
-                    <p>默认账号: admin / admin123</p>
                 </div>
             </form>
         </div>
@@ -654,11 +751,11 @@ def create_templates():
                 <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 card-hover">
                     <div class="flex items-center">
                         <div class="p-3 rounded-xl bg-purple-100 text-purple-600">
-                            <i class="fa fa-clock text-xl"></i>
+                            <i class="fa fa-at text-xl"></i>
                         </div>
                         <div class="ml-4">
-                            <h3 class="text-sm font-medium text-gray-600">最后更新</h3>
-                            <p id="last-update" class="text-lg font-semibold text-gray-800">--</p>
+                            <h3 class="text-sm font-medium text-gray-600">艾特用户</h3>
+                            <p id="at-user-status" class="text-2xl font-semibold text-gray-800">--</p>
                         </div>
                     </div>
                 </div>
@@ -713,7 +810,7 @@ def create_templates():
                     <div class="space-y-2 text-sm">
                         <div class="flex justify-between">
                             <span class="text-gray-600">面板版本</span>
-                            <span class="font-medium">v1.0.0</span>
+                            <span class="font-medium">v1.0.1</span>
                         </div>
                         <div class="flex justify-between">
                             <span class="text-gray-600">运行时间</span>
@@ -767,10 +864,34 @@ def create_templates():
                                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition">
                         </div>
                     </div>
+                    
+                    <!-- 艾特用户开关 -->
+                    <div class="mt-6 pt-6 border-t border-gray-200">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <h3 class="text-lg font-medium text-gray-800 mb-2">艾特用户设置</h3>
+                                <p class="text-sm text-gray-600">开启后，机器人回复时会@发送消息的用户</p>
+                            </div>
+                            <label class="switch">
+                                <input type="checkbox" id="at-user-switch">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="mt-3 bg-blue-50 border border-blue-200 rounded-lg p-4">
+                            <div class="flex items-start">
+                                <i class="fa fa-info-circle text-blue-500 mt-0.5 mr-2"></i>
+                                <p class="text-sm text-blue-700">
+                                    <strong>提示：</strong>如需使用艾特功能，请在关键词回复内容的任意位置添加 <code class="bg-blue-100 px-1 rounded">[at_user]</code>，否则不会生效。
+                                    例如："你好[at_user]，有什么可以帮助你的吗？"
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                    
                     <div class="mt-6">
                         <button type="submit" 
                                 class="px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 transition transform hover:-translate-y-0.5">
-                            <i class="fa fa-save mr-2"></i>保存配置
+                            <i class="fa fa-save mr-2"></i>保存配置(重启生效)
                         </button>
                     </div>
                 </form>
@@ -815,6 +936,16 @@ def create_templates():
                         </button>
                     </div>
                 </form>
+                <!-- 艾特用户提示 -->
+                <div class="mt-4 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                    <div class="flex items-start">
+                        <i class="fa fa-exclamation-circle text-yellow-500 mt-0.5 mr-2"></i>
+                        <p class="text-sm text-yellow-700">
+                            <strong>注意：</strong>如需在回复中@用户，请在回复内容中添加 <code class="bg-yellow-100 px-1 rounded">[at_user]</code>。
+                            例如："你好[at_user]，有什么可以帮助你的吗？" - 这会在回复时自动替换为用户的昵称。
+                        </p>
+                    </div>
+                </div>
             </div>
 
             <!-- 关键词列表 -->
@@ -852,20 +983,76 @@ def create_templates():
                     <h3 class="text-lg font-medium text-gray-800">日志记录</h3>
                     <div class="flex space-x-2">
                         <button onclick="fetchLogs()" 
-                                class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
+                                class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition flex items-center">
                             <i class="fa fa-sync-alt mr-2"></i>刷新
                         </button>
-                        <button onclick="clearLogs()" 
-                                class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 transition">
-                            <i class="fa fa-trash mr-2"></i>清空
+                        <button onclick="clearAllLogs()" 
+                                class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 transition flex items-center">
+                            <i class="fa fa-trash mr-2"></i>清空日志
                         </button>
                     </div>
                 </div>
-                <div class="p-6">
+                <div class="p-4 lg:p-6">
+                    <!-- 日志统计信息 -->
+                    <div class="mb-4 grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div class="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
+                            <div class="text-blue-600 font-semibold text-sm">总日志数</div>
+                            <div id="total-logs-count" class="text-2xl font-bold text-blue-700">--</div>
+                        </div>
+                        <div class="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
+                            <div class="text-green-600 font-semibold text-sm">信息日志</div>
+                            <div id="info-logs-count" class="text-2xl font-bold text-green-700">--</div>
+                        </div>
+                        <div class="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-center">
+                            <div class="text-yellow-600 font-semibold text-sm">警告日志</div>
+                            <div id="warning-logs-count" class="text-2xl font-bold text-yellow-700">--</div>
+                        </div>
+                        <div class="bg-red-50 border border-red-200 rounded-lg p-3 text-center">
+                            <div class="text-red-600 font-semibold text-sm">错误日志</div>
+                            <div id="error-logs-count" class="text-2xl font-bold text-red-700">--</div>
+                        </div>
+                    </div>
+
+                    <!-- 日志过滤器 -->
+                    <div class="mb-4 flex flex-wrap gap-2">
+                        <button onclick="setLogFilter('all')" id="filter-all" class="log-filter-btn active px-3 py-1 bg-blue-600 text-white rounded-full text-sm">全部</button>
+                        <button onclick="setLogFilter('info')" id="filter-info" class="log-filter-btn px-3 py-1 bg-gray-200 text-gray-700 rounded-full text-sm">信息</button>
+                        <button onclick="setLogFilter('warning')" id="filter-warning" class="log-filter-btn px-3 py-1 bg-gray-200 text-gray-700 rounded-full text-sm">警告</button>
+                        <button onclick="setLogFilter('error')" id="filter-error" class="log-filter-btn px-3 py-1 bg-gray-200 text-gray-700 rounded-full text-sm">错误</button>
+                        <button onclick="setLogFilter('bot')" id="filter-bot" class="log-filter-btn px-3 py-1 bg-gray-200 text-gray-700 rounded-full text-sm">机器人</button>
+                    </div>
+
+                    <!-- 日志搜索 -->
+                    <div class="mb-4 relative">
+                        <input type="text" id="log-search" placeholder="搜索日志内容..." 
+                               class="w-full px-4 py-2 pl-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
+                               onkeyup="filterLogs()">
+                        <i class="fa fa-search absolute left-3 top-3 text-gray-400"></i>
+                    </div>
+
+                    <!-- 日志容器 -->
                     <div id="log-container" class="bg-gray-900 text-gray-300 font-mono text-sm rounded-lg p-4 h-96 overflow-y-auto">
                         <div class="text-center text-gray-500 py-8">
                             <i class="fa fa-spinner fa-spin text-2xl mb-2"></i>
                             <p>正在加载日志...</p>
+                        </div>
+                    </div>
+
+                    <!-- 日志控制 -->
+                    <div class="mt-4 flex justify-between items-center">
+                        <div class="text-sm text-gray-600">
+                            显示 <span id="displayed-logs-count">0</span> 条日志，共 <span id="total-displayed-logs">0</span> 条
+                        </div>
+                        <div class="flex space-x-2">
+                            <button onclick="scrollLogsToTop()" class="px-3 py-1 bg-gray-600 text-white rounded text-sm hover:bg-gray-700 transition">
+                                <i class="fa fa-arrow-up mr-1"></i>顶部
+                            </button>
+                            <button onclick="scrollLogsToBottom()" class="px-3 py-1 bg-gray-600 text-white rounded text-sm hover:bg-gray-700 transition">
+                                <i class="fa fa-arrow-down mr-1"></i>底部
+                            </button>
+                            <button onclick="toggleAutoScroll()" id="auto-scroll-btn" class="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 transition">
+                                <i class="fa fa-magic mr-1"></i>自动滚动
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -942,16 +1129,23 @@ document.addEventListener('DOMContentLoaded', function() {
         button.addEventListener('click', function() {
             const sidebar = document.getElementById('sidebar');
             const overlay = document.getElementById('overlay');
-            sidebar.classList.toggle('-translate-x-full');
-            overlay.style.display = sidebar.classList.contains('-translate-x-full') ? 'none' : 'block';
+            if (sidebar && overlay) {
+                sidebar.classList.toggle('-translate-x-full');
+                overlay.style.display = sidebar.classList.contains('-translate-x-full') ? 'none' : 'block';
+            }
         });
     });
 
-    document.getElementById('overlay').addEventListener('click', function() {
-        const sidebar = document.getElementById('sidebar');
-        sidebar.classList.add('-translate-x-full');
-        this.style.display = 'none';
-    });
+    const overlay = document.getElementById('overlay');
+    if (overlay) {
+        overlay.addEventListener('click', function() {
+            const sidebar = document.getElementById('sidebar');
+            if (sidebar) {
+                sidebar.classList.add('-translate-x-full');
+                this.style.display = 'none';
+            }
+        });
+    }
 });
 
 // 显示指定部分，隐藏其他部分
@@ -962,7 +1156,10 @@ function showSection(sectionId) {
     });
     
     // 显示选中的部分
-    document.getElementById(sectionId).style.display = 'block';
+    const targetSection = document.getElementById(sectionId);
+    if (targetSection) {
+        targetSection.style.display = 'block';
+    }
     
     // 更新导航项状态
     document.querySelectorAll('.nav-item').forEach(item => {
@@ -986,8 +1183,10 @@ function showSection(sectionId) {
     
     // 在移动端选择后关闭菜单
     if (window.innerWidth < 1024) {
-        document.getElementById('sidebar').classList.add('-translate-x-full');
-        document.getElementById('overlay').style.display = 'none';
+        const sidebar = document.getElementById('sidebar');
+        const overlay = document.getElementById('overlay');
+        if (sidebar) sidebar.classList.add('-translate-x-full');
+        if (overlay) overlay.style.display = 'none';
     }
 }
 
@@ -1006,43 +1205,233 @@ function stopLogPolling() {
     }
 }
 
+// 日志相关的全局变量
+let currentLogFilter = 'all';
+let currentLogs = [];
+let autoScrollEnabled = true;
+
+// 设置日志过滤器
+function setLogFilter(filter) {
+    currentLogFilter = filter;
+    
+    // 更新按钮状态
+    document.querySelectorAll('.log-filter-btn').forEach(btn => {
+        btn.classList.remove('active', 'bg-blue-600', 'text-white');
+        btn.classList.add('bg-gray-200', 'text-gray-700');
+    });
+    
+    const activeBtn = document.getElementById(`filter-${filter}`);
+    if (activeBtn) {
+        activeBtn.classList.add('active', 'bg-blue-600', 'text-white');
+        activeBtn.classList.remove('bg-gray-200', 'text-gray-700');
+    }
+    
+    // 重新渲染日志
+    renderLogs();
+}
+
+// 过滤日志
+function filterLogs() {
+    renderLogs();
+}
+
+// 渲染日志
+function renderLogs() {
+    const logContainer = document.getElementById('log-container');
+    const searchInput = document.getElementById('log-search');
+    const searchTerm = searchInput ? searchInput.value.toLowerCase() : '';
+    
+    if (!logContainer) return;
+    
+    if (!currentLogs || currentLogs.length === 0) {
+        logContainer.innerHTML = '<div class="text-center text-gray-500 py-8">暂无日志</div>';
+        updateLogStats(0, 0);
+        return;
+    }
+    
+    let filteredLogs = currentLogs;
+    
+    // 应用类型过滤器
+    if (currentLogFilter !== 'all') {
+        filteredLogs = currentLogs.filter(log => {
+            if (currentLogFilter === 'info') {
+                return !log.includes('ERROR') && !log.includes('错误') && !log.includes('WARNING') && !log.includes('警告') && !log.includes('BOT:');
+            } else if (currentLogFilter === 'warning') {
+                return log.includes('WARNING') || log.includes('警告');
+            } else if (currentLogFilter === 'error') {
+                return log.includes('ERROR') || log.includes('错误') || log.includes('失败');
+            } else if (currentLogFilter === 'bot') {
+                return log.includes('BOT:');
+            }
+            return true;
+        });
+    }
+    
+    // 应用搜索过滤器
+    if (searchTerm) {
+        filteredLogs = filteredLogs.filter(log => log.toLowerCase().includes(searchTerm));
+    }
+    
+    if (filteredLogs.length === 0) {
+        logContainer.innerHTML = '<div class="text-center text-gray-500 py-8">没有匹配的日志</div>';
+        updateLogStats(0, filteredLogs.length);
+        return;
+    }
+    
+    // 渲染日志条目
+    logContainer.innerHTML = filteredLogs.map(log => {
+        let logClass = 'info';
+        let icon = 'fa fa-info-circle text-blue-400';
+        let badge = '';
+        
+        if (log.includes('ERROR') || log.includes('错误') || log.includes('失败')) {
+            logClass = 'error';
+            icon = 'fa fa-exclamation-circle text-red-400';
+        } else if (log.includes('成功') || log.includes('SUCCESS')) {
+            logClass = 'success';
+            icon = 'fa fa-check-circle text-green-400';
+        } else if (log.includes('警告') || log.includes('WARNING')) {
+            logClass = 'warning';
+            icon = 'fa fa-exclamation-triangle text-yellow-400';
+        } else if (log.includes('BOT:')) {
+            logClass = 'bot';
+            icon = 'fa fa-robot text-purple-400';
+        }
+        
+        // 高亮搜索关键词
+        let highlightedLog = log;
+        if (searchTerm) {
+            const regex = new RegExp(`(${searchTerm})`, 'gi');
+            highlightedLog = log.replace(regex, '<mark class="bg-yellow-300 text-gray-900">$1</mark>');
+        }
+        
+        return `
+            <div class="log-entry ${logClass} flex items-start space-x-3 py-2 px-3 border-l-4 ${getBorderColor(logClass)} hover:bg-gray-800 transition cursor-pointer" onclick="copyLogContent('${log.replace(/'/g, "\\'")}')">
+                <i class="${icon} mt-1 flex-shrink-0"></i>
+                <div class="flex-1">
+                    <div class="flex items-center flex-wrap">
+                        <span class="text-gray-300">${highlightedLog}</span>
+                        ${badge}
+                    </div>
+                    <div class="text-xs text-gray-500 mt-1 opacity-0 hover:opacity-100 transition">
+                        点击复制日志内容
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    updateLogStats(currentLogs.length, filteredLogs.length);
+    
+    // 自动滚动到底部
+    if (autoScrollEnabled) {
+        logContainer.scrollTop = logContainer.scrollHeight;
+    }
+}
+
+// 获取边框颜色
+function getBorderColor(logClass) {
+    switch(logClass) {
+        case 'error': return 'border-red-500';
+        case 'success': return 'border-green-500';
+        case 'warning': return 'border-yellow-500';
+        case 'bot': return 'border-purple-500';
+        default: return 'border-blue-500';
+    }
+}
+
+// 更新日志统计
+function updateLogStats(total, displayed) {
+    const displayedCount = document.getElementById('displayed-logs-count');
+    const totalDisplayed = document.getElementById('total-displayed-logs');
+    
+    if (displayedCount) displayedCount.textContent = displayed;
+    if (totalDisplayed) totalDisplayed.textContent = total;
+    
+    // 更新类型统计
+    if (currentLogs && currentLogs.length > 0) {
+        const infoCount = currentLogs.filter(log => 
+            !log.includes('ERROR') && !log.includes('错误') && !log.includes('WARNING') && !log.includes('警告') && !log.includes('BOT:')
+        ).length;
+        const warningCount = currentLogs.filter(log => 
+            log.includes('WARNING') || log.includes('警告')
+        ).length;
+        const errorCount = currentLogs.filter(log => 
+            log.includes('ERROR') || log.includes('错误') || log.includes('失败')
+        ).length;
+        
+        const totalCount = document.getElementById('total-logs-count');
+        const infoCountEl = document.getElementById('info-logs-count');
+        const warningCountEl = document.getElementById('warning-logs-count');
+        const errorCountEl = document.getElementById('error-logs-count');
+        
+        if (totalCount) totalCount.textContent = currentLogs.length;
+        if (infoCountEl) infoCountEl.textContent = infoCount;
+        if (warningCountEl) warningCountEl.textContent = warningCount;
+        if (errorCountEl) errorCountEl.textContent = errorCount;
+    }
+}
+
+// 复制日志内容
+function copyLogContent(content) {
+    navigator.clipboard.writeText(content).then(() => {
+        showNotification('日志内容已复制到剪贴板', 'success');
+    }).catch(err => {
+        console.error('复制失败:', err);
+        showNotification('复制失败', 'error');
+    });
+}
+
+// 滚动到日志顶部
+function scrollLogsToTop() {
+    const logContainer = document.getElementById('log-container');
+    if (logContainer) {
+        logContainer.scrollTop = 0;
+    }
+}
+
+// 滚动到日志底部
+function scrollLogsToBottom() {
+    const logContainer = document.getElementById('log-container');
+    if (logContainer) {
+        logContainer.scrollTop = logContainer.scrollHeight;
+    }
+}
+
+// 切换自动滚动
+function toggleAutoScroll() {
+    autoScrollEnabled = !autoScrollEnabled;
+    const btn = document.getElementById('auto-scroll-btn');
+    
+    if (btn) {
+        if (autoScrollEnabled) {
+            btn.classList.remove('bg-gray-600');
+            btn.classList.add('bg-green-600');
+            btn.innerHTML = '<i class="fa fa-magic mr-1"></i>自动滚动';
+            showNotification('已启用自动滚动', 'success');
+        } else {
+            btn.classList.remove('bg-green-600');
+            btn.classList.add('bg-gray-600');
+            btn.innerHTML = '<i class="fa fa-pause mr-1"></i>暂停滚动';
+            showNotification('已暂停自动滚动', 'warning');
+        }
+    }
+}
+
 // 获取日志
 function fetchLogs() {
-    fetch('/api/get_logs?limit=100')
+    fetch('/api/get_logs?limit=500')
         .then(response => response.json())
         .then(data => {
-            const logContainer = document.getElementById('log-container');
-            if (logContainer) {
-                if (data.logs && data.logs.length > 0) {
-                    logContainer.innerHTML = data.logs.map(log => {
-                        let logClass = 'info';
-                        let icon = 'fa fa-info-circle text-blue-400';
-                        
-                        if (log.includes('ERROR') || log.includes('错误') || log.includes('失败')) {
-                            logClass = 'error';
-                            icon = 'fa fa-exclamation-circle text-red-400';
-                        } else if (log.includes('成功') || log.includes('SUCCESS')) {
-                            logClass = 'success';
-                            icon = 'fa fa-check-circle text-green-400';
-                        } else if (log.includes('警告') || log.includes('WARNING')) {
-                            logClass = 'warning';
-                            icon = 'fa fa-exclamation-triangle text-yellow-400';
-                        } else if (log.includes('BOT:')) {
-                            logClass = 'bot';
-                            icon = 'fa fa-robot text-purple-400';
-                        }
-                        
-                        return `
-                            <div class="log-entry ${logClass} flex items-start space-x-2 py-1 border-l-4 border-${logClass === 'error' ? 'red' : logClass === 'success' ? 'green' : logClass === 'warning' ? 'yellow' : logClass === 'bot' ? 'purple' : 'blue'}-500 pl-3 mb-2">
-                                <i class="${icon} mt-1 flex-shrink-0"></i>
-                                <span class="flex-1">${log}</span>
-                            </div>
-                        `;
-                    }).join('');
-                    logContainer.scrollTop = logContainer.scrollHeight;
-                } else {
+            if (data.logs && data.logs.length > 0) {
+                currentLogs = data.logs;
+                renderLogs();
+            } else {
+                const logContainer = document.getElementById('log-container');
+                if (logContainer) {
                     logContainer.innerHTML = '<div class="text-center text-gray-500 py-8">暂无日志</div>';
                 }
+                updateLogStats(0, 0);
             }
         })
         .catch(error => {
@@ -1054,13 +1443,62 @@ function fetchLogs() {
         });
 }
 
-// 清空日志
-function clearLogs() {
-    if (confirm('确定要清空所有日志吗？')) {
-        const logContainer = document.getElementById('log-container');
-        if (logContainer) {
-            logContainer.innerHTML = '<div class="text-center text-gray-500 py-8">日志已清空</div>';
+// 清除所有日志
+function clearAllLogs() {
+    if (confirm('确定要清空所有日志吗？此操作不可恢复！')) {
+        fetch('/api/clear_logs', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                showNotification(data.message, data.success ? 'success' : 'error');
+                if (data.success) {
+                    // 清空当前日志显示
+                    currentLogs = [];
+                    renderLogs();
+                }
+            })
+            .catch(error => {
+                console.error('清除日志失败:', error);
+                showNotification('清除日志失败，请检查网络连接', 'error');
+            });
+    }
+}
+
+// 更新艾特用户设置
+function updateAtUser(value) {
+    fetch('/api/update_atuser', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ at_user: value })
+    })
+    .then(response => response.json())
+    .then(data => {
+        showNotification(data.message, data.success ? 'success' : 'error');
+        if (data.success) {
+            // 更新状态显示
+            updateAtUserStatus(value);
         }
+    })
+    .catch(error => {
+        console.error('更新艾特用户设置失败:', error);
+        showNotification('更新艾特用户设置失败，请检查网络连接', 'error');
+    });
+}
+
+// 更新艾特用户状态显示
+function updateAtUserStatus(enabled) {
+    const statusElement = document.getElementById('at-user-status');
+    const switchElement = document.getElementById('at-user-switch');
+    
+    if (statusElement) {
+        if (enabled) {
+            statusElement.innerHTML = '<span class="text-green-600 flex items-center"><i class="fa fa-check-circle mr-2"></i>已开启</span>';
+        } else {
+            statusElement.innerHTML = '<span class="text-red-600 flex items-center"><i class="fa fa-times-circle mr-2"></i>已关闭</span>';
+        }
+    }
+    
+    if (switchElement) {
+        switchElement.checked = enabled;
     }
 }
 
@@ -1075,32 +1513,37 @@ function fetchBotStatus() {
             const stopBtn = document.getElementById('stop-btn');
             const keywordCount = document.getElementById('keyword-count');
             const keywordsCount = document.getElementById('keywords-count');
+            const lastUpdate = document.getElementById('last-update');
+            const logCount = document.getElementById('log-count');
             
-            if (data.running) {
-                statusText.innerHTML = '<span class="text-green-600 flex items-center"><i class="fa fa-circle animate-pulse mr-2"></i>运行中</span>';
-                startBtn.disabled = true;
-                stopBtn.disabled = false;
-            } else {
-                statusText.innerHTML = '<span class="text-red-600 flex items-center"><i class="fa fa-circle mr-2"></i>已停止</span>';
-                startBtn.disabled = false;
-                stopBtn.disabled = true;
+            if (statusText) {
+                if (data.running) {
+                    statusText.innerHTML = '<span class="text-green-600 flex items-center"><i class="fa fa-circle animate-pulse mr-2"></i>运行中</span>';
+                } else {
+                    statusText.innerHTML = '<span class="text-red-600 flex items-center"><i class="fa fa-circle mr-2"></i>已停止</span>';
+                }
             }
+            
+            if (startBtn) startBtn.disabled = data.running;
+            if (stopBtn) stopBtn.disabled = !data.running;
             
             // 更新关键词数量
             const keywordCountValue = Object.keys(data.keywords || {}).length;
-            keywordCount.textContent = keywordCountValue;
-            if (keywordsCount) {
-                keywordsCount.textContent = `共 ${keywordCountValue} 个关键词`;
-            }
+            if (keywordCount) keywordCount.textContent = keywordCountValue;
+            if (keywordsCount) keywordsCount.textContent = `共 ${keywordCountValue} 个关键词`;
+            
+            // 更新艾特用户状态
+            updateAtUserStatus(data.at_user || false);
             
             // 更新最后更新时间
-            document.getElementById('last-update').textContent = new Date().toLocaleString();
+            if (lastUpdate) lastUpdate.textContent = new Date().toLocaleString();
             
             // 更新系统信息
-            document.getElementById('log-count').textContent = keywordCountValue;
+            if (logCount) logCount.textContent = keywordCountValue;
             
             // 如果是在关键词页面，更新关键词列表
-            if (document.getElementById('keywords').style.display !== 'none') {
+            const keywordsSection = document.getElementById('keywords');
+            if (keywordsSection && keywordsSection.style.display !== 'none') {
                 updateKeywordsList(data.keywords);
             }
         })
@@ -1125,7 +1568,7 @@ function updateConfigForm(config) {
     }
 }
 
-function config() {
+function loadConfig() {
     fetch('/api/bot_status')
         .then(response => response.json())
         .then(data => {
@@ -1265,103 +1708,120 @@ function showNotification(message, type = 'info') {
 }
 
 // 表单提交处理
-document.getElementById('config-form')?.addEventListener('submit', function(e) {
-    e.preventDefault();
-    const formData = new FormData(this);
-    const config = {};
-    
-    for (let [key, value] of formData.entries()) {
-        const configKey = parseConfigKey(key);
-        if (configKey) {
-            config[configKey] = value;
+const configForm = document.getElementById('config-form');
+if (configForm) {
+    configForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        const config = {};
+        
+        for (let [key, value] of formData.entries()) {
+            const configKey = parseConfigKey(key);
+            if (configKey) {
+                config[configKey] = value;
+            }
         }
-    }
-    
-    fetch('/api/update_config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(config)
-    })
-    .then(response => response.json())
-    .then(data => {
-        showNotification(data.message, data.success ? 'success' : 'error');
-        if (data.success) {
-            fetchBotStatus();
-        }
-    })
-    .catch(error => {
-        console.error('更新配置失败:', error);
-        showNotification('更新配置失败，请检查网络连接', 'error');
+        
+        fetch('/api/update_config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config)
+        })
+        .then(response => response.json())
+        .then(data => {
+            showNotification(data.message, data.success ? 'success' : 'error');
+            if (data.success) {
+                fetchBotStatus();
+            }
+        })
+        .catch(error => {
+            console.error('更新配置失败:', error);
+            showNotification('更新配置失败，请检查网络连接', 'error');
+        });
     });
-});
+}
 
-document.getElementById('add-keyword-form')?.addEventListener('submit', function(e) {
-    e.preventDefault();
-    const formData = new FormData(this);
-    const data = {
-        keyword: formData.get('keyword'),
-        reply: formData.get('reply')
-    };
-    
-    if (!data.keyword.trim() || !data.reply.trim()) {
-        showNotification('关键词和回复内容不能为空', 'error');
-        return;
-    }
-    
-    fetch('/api/add_keyword', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-    })
-    .then(response => response.json())
-    .then(data => {
-        showNotification(data.message, data.success ? 'success' : 'error');
-        if (data.success) {
-            this.reset();
-            fetchBotStatus();
+const addKeywordForm = document.getElementById('add-keyword-form');
+if (addKeywordForm) {
+    addKeywordForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        const data = {
+            keyword: formData.get('keyword'),
+            reply: formData.get('reply')
+        };
+        
+        if (!data.keyword.trim() || !data.reply.trim()) {
+            showNotification('关键词和回复内容不能为空', 'error');
+            return;
         }
-    })
-    .catch(error => {
-        console.error('添加关键词失败:', error);
-        showNotification('添加关键词失败，请检查网络连接', 'error');
+        
+        fetch('/api/add_keyword', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(data => {
+            showNotification(data.message, data.success ? 'success' : 'error');
+            if (data.success) {
+                this.reset();
+                fetchBotStatus();
+            }
+        })
+        .catch(error => {
+            console.error('添加关键词失败:', error);
+            showNotification('添加关键词失败，请检查网络连接', 'error');
+        });
     });
-});
+}
 
-document.getElementById('admin-form')?.addEventListener('submit', function(e) {
-    e.preventDefault();
-    const formData = new FormData(this);
-    const data = {
-        username: formData.get('username'),
-        current_password: formData.get('current_password'),
-        new_password: formData.get('new_password')
-    };
-    
-    if (data.new_password && data.new_password !== formData.get('confirm_password')) {
-        showNotification('新密码和确认密码不匹配', 'error');
-        return;
-    }
-    
-    fetch('/api/update_admin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data)
-    })
-    .then(response => response.json())
-    .then(data => {
-        showNotification(data.message, data.success ? 'success' : 'error');
-        if (data.success) {
-            // 更新页面上的用户名显示
-            const usernameElements = document.querySelectorAll('.username-display');
-            usernameElements.forEach(el => {
-                el.textContent = data.username || formData.get('username');
-            });
+const adminForm = document.getElementById('admin-form');
+if (adminForm) {
+    adminForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        const data = {
+            username: formData.get('username'),
+            current_password: formData.get('current_password'),
+            new_password: formData.get('new_password')
+        };
+        
+        if (data.new_password && data.new_password !== formData.get('confirm_password')) {
+            showNotification('新密码和确认密码不匹配', 'error');
+            return;
         }
-    })
-    .catch(error => {
-        console.error('更新账号信息失败:', error);
-        showNotification('更新账号信息失败，请检查网络连接', 'error');
+        
+        fetch('/api/update_admin', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+        })
+        .then(response => response.json())
+        .then(data => {
+            showNotification(data.message, data.success ? 'success' : 'error');
+            if (data.success) {
+                // 更新页面上的用户名显示
+                const usernameElements = document.querySelectorAll('.username-display');
+                usernameElements.forEach(el => {
+                    el.textContent = data.username || formData.get('username');
+                });
+            }
+        })
+        .catch(error => {
+            console.error('更新账号信息失败:', error);
+            showNotification('更新账号信息失败，请检查网络连接', 'error');
+        });
     });
-});
+}
+
+// 艾特用户开关事件监听
+const atUserSwitch = document.getElementById('at-user-switch');
+if (atUserSwitch) {
+    atUserSwitch.addEventListener('change', function() {
+        updateAtUser(this.checked);
+    });
+}
 
 // 计算运行时间
 function updateUptime() {
@@ -1386,7 +1846,7 @@ document.addEventListener('DOMContentLoaded', function() {
     setInterval(fetchBotStatus, 3000);
     fetchBotStatus();
     
-    config()
+    loadConfig();
     
     // 初始化运行时间
     updateUptime();
