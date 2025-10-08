@@ -43,7 +43,7 @@ Bilibili PrivateMessage Bot (后文简称BPMB) 这是一个基于Bilibili私信A
 
 1. 下载源码到本地
 ```bash
-https://github.com/7Hello80/Bilibili_PrivateMessage_Bot
+git clone https://github.com/7Hello80/Bilibili_PrivateMessage_Bot
 ```
 
 2. 安装所需的Python依赖
