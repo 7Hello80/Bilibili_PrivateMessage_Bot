@@ -446,6 +446,12 @@ def inspect_config():
     print(f"{Fore.GREEN}✓ 检查完成，开始运行\n")
     time.sleep(0.5)
     clean_screen()
+    print(f"{Fore.GREEN}程序名称: {Fore.WHITE}哔哩哔哩私信机器人")
+    print(f"{Fore.GREEN}版本号: {Fore.WHITE}v1.0.4")
+    print(f"{Fore.GREEN}作者: {Fore.WHITE}淡意往事")
+    print(f"{Fore.GREEN}哔哩哔哩主页: {Fore.WHITE}https://b23.tv/tq8hoKu")
+    print(f"{Fore.GREEN}Github: {Fore.WHITE}https://github.com/7hello80")
+    print(f"{Fore.GREEN}启动时间: {Fore.WHITE}{time.strftime('%Y-%m-%d %H:%M:%S')}")
     return True
 
 if __name__ == "__main__":
