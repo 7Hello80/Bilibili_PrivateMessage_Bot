@@ -1,5 +1,3 @@
-# [file name]: web_panel.py
-# [file content begin]
 import json
 import os
 import logging
@@ -12,6 +10,8 @@ import subprocess
 import signal
 import psutil
 import init
+import sys
+import uuid
 
 # 导入现有的配置管理
 import ConfigManage
@@ -143,7 +143,212 @@ def login_required(f):
     decorated_function.__name__ = f.__name__
     return decorated_function
 
-# 路由定义
+def get_python3_path():
+    def is_python3(cmd):
+        try:
+            result = subprocess.run(
+                [cmd, '--version'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            version_output = result.stdout + result.stderr
+            return 'Python 3' in version_output
+        except:
+            return False
+    
+    # 检查虚拟环境
+    venv_dirs = ['.venv', 'venv', 'env']
+    for venv_dir in venv_dirs:
+        if sys.platform == "win32":
+            paths = [f'{venv_dir}/Scripts/python.exe', f'{venv_dir}/Scripts/python']
+        else:
+            paths = [f'{venv_dir}/bin/python', f'{venv_dir}/bin/python3']
+        
+        for path in paths:
+            if os.path.exists(path) and is_python3(path):
+                return path
+    
+    # 检查系统命令
+    commands = ['python3', 'python'] if sys.platform != "win32" else ['python']
+    for cmd in commands:
+        if is_python3(cmd):
+            return cmd
+    
+    return 'python3'
+
+# 多账号管理路由
+@app.route('/api/get_accounts')
+@login_required
+def get_accounts():
+    """获取所有账号"""
+    accounts = bot_config.get_accounts()
+    global_keywords = bot_config.get_global_keywords()
+    return jsonify({
+        'accounts': accounts,
+        'global_keywords': global_keywords
+    })
+
+@app.route('/api/add_account', methods=['POST'])
+@login_required
+def add_account():
+    """添加新账号"""
+    try:
+        account_data = request.json
+        
+        # 创建新账号配置
+        new_account = {
+            "name": account_data.get("name", "新账号"),
+            "config": {
+                "sessdata": account_data.get("sessdata", ""),
+                "bili_jct": account_data.get("bili_jct", ""),
+                "self_uid": account_data.get("self_uid", 0),
+                "device_id": account_data.get("device_id", str(uuid.uuid4()).upper())
+            },
+            "keyword": account_data.get("keywords", {}),
+            "at_user": account_data.get("at_user", False),
+            "auto_focus": account_data.get("auto_focus", False),
+            "enabled": account_data.get("enabled", True)
+        }
+        
+        bot_config.add_account(new_account)
+        log_handler.add_log(f"添加新账号: {new_account['name']}")
+        
+        return jsonify({'success': True, 'message': '账号添加成功'})
+    
+    except Exception as e:
+        log_handler.add_log(f"添加账号失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'添加失败: {str(e)}'})
+
+@app.route('/api/update_account/<int:account_index>', methods=['POST'])
+@login_required
+def update_account(account_index):
+    """更新账号配置"""
+    try:
+        account_data = request.json
+        
+        # 获取原有账号的关键词
+        existing_account = bot_config.get_account(account_index)
+        existing_keywords = existing_account.get("keyword", {})
+        
+        updated_account = {
+            "name": account_data.get("name", f"账号{account_index+1}"),
+            "config": {
+                "sessdata": account_data.get("sessdata", ""),
+                "bili_jct": account_data.get("bili_jct", ""),
+                "self_uid": account_data.get("self_uid", 0),
+                "device_id": account_data.get("device_id", "")
+            },
+            "keyword": existing_keywords,  # 保留原有的关键词，不覆盖
+            "at_user": account_data.get("at_user", False),
+            "auto_focus": account_data.get("auto_focus", False),
+            "enabled": account_data.get("enabled", True)
+        }
+        
+        bot_config.update_account(account_index, updated_account)
+        log_handler.add_log(f"更新账号: {updated_account['name']}")
+        
+        return jsonify({'success': True, 'message': '账号更新成功'})
+    
+    except Exception as e:
+        log_handler.add_log(f"更新账号失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'更新失败: {str(e)}'})
+
+@app.route('/api/delete_account/<int:account_index>', methods=['POST'])
+@login_required
+def delete_account(account_index):
+    """删除账号"""
+    try:
+        accounts = bot_config.get_accounts()
+        if 0 <= account_index < len(accounts):
+            account_name = accounts[account_index].get("name", f"账号{account_index+1}")
+            bot_config.delete_account(account_index)
+            log_handler.add_log(f"删除账号: {account_name}")
+            return jsonify({'success': True, 'message': '账号删除成功'})
+        else:
+            return jsonify({'success': False, 'message': '账号不存在'})
+    
+    except Exception as e:
+        log_handler.add_log(f"删除账号失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'删除失败: {str(e)}'})
+
+@app.route('/api/toggle_account/<int:account_index>', methods=['POST'])
+@login_required
+def toggle_account(account_index):
+    """启用/禁用账号"""
+    try:
+        accounts = bot_config.get_accounts()
+        if 0 <= account_index < len(accounts):
+            account = accounts[account_index]
+            account["enabled"] = not account.get("enabled", True)
+            bot_config.update_account(account_index, account)
+            
+            status = "启用" if account["enabled"] else "禁用"
+            log_handler.add_log(f"{status}账号: {account.get('name', f'账号{account_index+1}')}")
+            
+            return jsonify({'success': True, 'message': f'账号已{status}', 'enabled': account["enabled"]})
+        else:
+            return jsonify({'success': False, 'message': '账号不存在'})
+    
+    except Exception as e:
+        log_handler.add_log(f"切换账号状态失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'操作失败: {str(e)}'})
+
+@app.route('/api/update_global_keywords', methods=['POST'])
+@login_required
+def update_global_keywords():
+    """更新全局关键词"""
+    try:
+        keywords_data = request.json
+        bot_config.set_global_keywords(keywords_data)
+        
+        log_handler.add_log("全局关键词配置已更新")
+        return jsonify({'success': True, 'message': '全局关键词更新成功'})
+    
+    except Exception as e:
+        log_handler.add_log(f"全局关键词更新失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'更新失败: {str(e)}'})
+
+@app.route('/api/add_account_keyword/<int:account_index>', methods=['POST'])
+@login_required
+def add_account_keyword(account_index):
+    """为指定账号添加关键词"""
+    try:
+        keyword = request.json.get('keyword')
+        reply = request.json.get('reply')
+        
+        if not keyword or not reply:
+            return jsonify({'success': False, 'message': '关键词和回复内容不能为空'})
+        
+        bot_config.add_account_keyword(account_index, keyword, reply)
+        
+        log_handler.add_log(f"为账号 {account_index} 添加关键词: {keyword} -> {reply}")
+        return jsonify({'success': True, 'message': '关键词添加成功'})
+    
+    except Exception as e:
+        log_handler.add_log(f"添加关键词失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'添加失败: {str(e)}'})
+
+@app.route('/api/delete_account_keyword/<int:account_index>', methods=['POST'])
+@login_required
+def delete_account_keyword(account_index):
+    """删除指定账号的关键词"""
+    try:
+        keyword = request.json.get('keyword')
+        
+        if not keyword:
+            return jsonify({'success': False, 'message': '关键词不能为空'})
+        
+        bot_config.delete_account_keyword(account_index, keyword)
+        
+        log_handler.add_log(f"从账号 {account_index} 删除关键词: {keyword}")
+        return jsonify({'success': True, 'message': '关键词删除成功'})
+    
+    except Exception as e:
+        log_handler.add_log(f"删除关键词失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'删除失败: {str(e)}'})
+
+# 原有路由定义
 @app.route('/')
 @login_required
 def index():
@@ -190,11 +395,16 @@ def get_bot_status():
     else:
         is_bot_running = False
     
+    # 获取账号信息
+    accounts = bot_config.get_accounts()
+    enabled_accounts = [acc for acc in accounts if acc.get("enabled", True)]
+    
     return jsonify({
         'running': is_bot_running,
-        'config': bot_config.get("config", {}),
-        'keywords': bot_config.get("keyword", {}),
-        'at_user': bot_config.get("at_user", False)
+        'accounts': accounts,
+        'enabled_accounts_count': len(enabled_accounts),
+        'total_accounts_count': len(accounts),
+        'global_keywords': bot_config.get_global_keywords()
     })
 
 @app.route('/api/start_bot', methods=['POST'])
@@ -207,12 +417,10 @@ def start_bot():
         return jsonify({'success': False, 'message': '机器人已在运行中'})
     
     try:
-        # 检查Python解释器路径
-        python_path = 'python3'
-        if os.path.exists('.venv/bin/python3'):
-            python_path = '.venv/bin/python3'
-        elif os.path.exists('venv/bin/python3'):
-            python_path = 'venv/bin/python3'
+        python_path = get_python3_path()
+        if not python_path:
+            log_handler.add_log("未找到python3解释器", "ERROR")
+            return jsonify({'success': False, 'message': '未找到python3解释器'})
         
         # 启动机器人进程
         bot_process = subprocess.Popen(
@@ -263,6 +471,52 @@ def stop_bot():
         log_handler.add_log(f"机器人停止失败: {str(e)}", "ERROR")
         return jsonify({'success': False, 'message': f'停止失败: {str(e)}'})
 
+@app.route('/api/restart_bot', methods=['POST'])
+@login_required
+def restart_bot():
+    """重启机器人"""
+    global bot_process, is_bot_running
+    
+    try:
+        # 先停止机器人
+        if is_bot_running and bot_process:
+            bot_process.terminate()
+            try:
+                bot_process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                bot_process.kill()
+                bot_process.wait()
+            is_bot_running = False
+        
+        # 等待一下确保进程完全停止
+        time.sleep(2)
+        
+        # 再启动机器人
+        python_path = get_python3_path()
+        if not python_path:
+            log_handler.add_log("未找到python3解释器", "ERROR")
+            return jsonify({'success': False, 'message': '未找到python3解释器'})
+        
+        bot_process = subprocess.Popen(
+            [python_path, 'index.py'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            bufsize=1
+        )
+        
+        # 启动日志读取线程
+        threading.Thread(target=read_bot_output, daemon=True).start()
+        
+        is_bot_running = True
+        log_handler.add_log("机器人重启成功")
+        
+        return jsonify({'success': True, 'message': '机器人重启成功'})
+    
+    except Exception as e:
+        log_handler.add_log(f"机器人重启失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'重启失败: {str(e)}'})
+
 def read_bot_output():
     """读取机器人输出"""
     global bot_process
@@ -270,123 +524,6 @@ def read_bot_output():
         for line in iter(bot_process.stdout.readline, ''):
             if line:
                 log_handler.add_log(f"BOT: {line.strip()}")
-
-@app.route('/api/update_config', methods=['POST'])
-@login_required
-def update_config():
-    """更新机器人配置"""
-    try:
-        config_data = request.json
-        
-        bot_config.set("config", config_data)
-        
-        log_handler.add_log("机器人配置已更新")
-        return jsonify({'success': True, 'message': '配置更新成功'})
-    
-    except Exception as e:
-        log_handler.add_log(f"配置更新失败: {str(e)}", "ERROR")
-        return jsonify({'success': False, 'message': f'更新失败: {str(e)}'})
-
-@app.route('/api/update_keywords', methods=['POST'])
-@login_required
-def update_keywords():
-    """更新关键词配置"""
-    try:
-        keywords_data = request.json
-        
-        # 更新关键词
-        bot_config.set("keyword", keywords_data)
-        
-        log_handler.add_log("关键词配置已更新")
-        return jsonify({'success': True, 'message': '关键词更新成功'})
-    
-    except Exception as e:
-        log_handler.add_log(f"关键词更新失败: {str(e)}", "ERROR")
-        return jsonify({'success': False, 'message': f'更新失败: {str(e)}'})
-
-@app.route('/api/update_atuser', methods=['POST'])
-@login_required
-def update_atuser():
-    """更新是否at用户"""
-    try:
-        value = request.json.get("at_user")
-        if value is None:
-            return jsonify({"success": False, "message": "值不能为空"})
-            
-        bot_config.set("at_user", value)
-        
-        log_handler.add_log(f"艾特用户设置已更新: {'开启' if value else '关闭'}")
-        return jsonify({'success': True, 'message': '艾特用户设置更新成功'})
-    
-    except Exception as e:
-        log_handler.add_log(f"艾特用户设置更新失败: {str(e)}", "ERROR")
-        return jsonify({'success': False, 'message': f'更新失败: {str(e)}'})
-
-@app.route('/api/add_keyword', methods=['POST'])
-@login_required
-def add_keyword():
-    """添加单个关键词"""
-    try:
-        keyword = request.json.get('keyword')
-        reply = request.json.get('reply')
-        
-        if not keyword or not reply:
-            return jsonify({'success': False, 'message': '关键词和回复内容不能为空'})
-        
-        # 获取当前关键词
-        current_keywords = bot_config.get("keyword", {})
-        
-        # 检查回复内容中是否包含任何现有关键词
-        processed_reply = reply
-        for existing_keyword in current_keywords.keys():
-            if existing_keyword in processed_reply:
-                # 在关键词的每个字符间添加零宽空格
-                protected_keyword = '\u200b'.join(existing_keyword)
-                processed_reply = processed_reply.replace(existing_keyword, protected_keyword)
-        
-        # 也检查当前要添加的关键词是否在回复中
-        if keyword in processed_reply:
-            protected_keyword = '\u200b'.join(keyword)
-            processed_reply = processed_reply.replace(keyword, protected_keyword)
-        
-        # 使用处理后的回复内容
-        current_keywords[keyword] = processed_reply
-        
-        # 更新配置
-        bot_config.set("keyword", current_keywords)
-        
-        log_handler.add_log(f"添加关键词: {keyword} -> {processed_reply}")
-        return jsonify({'success': True, 'message': '关键词添加成功'})
-    
-    except Exception as e:
-        log_handler.add_log(f"关键词添加失败: {str(e)}", "ERROR")
-        return jsonify({'success': False, 'message': f'添加失败: {str(e)}'})
-
-@app.route('/api/delete_keyword', methods=['POST'])
-@login_required
-def delete_keyword():
-    """删除关键词"""
-    try:
-        keyword = request.json.get('keyword')
-        
-        if not keyword:
-            return jsonify({'success': False, 'message': '关键词不能为空'})
-        
-        # 获取当前关键词
-        current_keywords = bot_config.get("keyword", {})
-        
-        if keyword in current_keywords:
-            del current_keywords[keyword]
-            # 更新配置
-            bot_config.set("keyword", current_keywords)
-            log_handler.add_log(f"删除关键词: {keyword}")
-            return jsonify({'success': True, 'message': '关键词删除成功'})
-        else:
-            return jsonify({'success': False, 'message': '关键词不存在'})
-    
-    except Exception as e:
-        log_handler.add_log(f"关键词删除失败: {str(e)}", "ERROR")
-        return jsonify({'success': False, 'message': f'删除失败: {str(e)}'})
 
 @app.route('/api/get_logs')
 @login_required
@@ -653,9 +790,7 @@ def create_templates():
     
     # 创建主控制面板
     with open(os.path.join(templates_dir, 'index.html'), 'w', encoding='utf-8') as f:
-        f.write('''<!-- [file name]: templates/index.html -->
-<!-- [file content begin] -->
-{% extends "base.html" %}
+        f.write('''{% extends "base.html" %}
 
 {% block content %}
 <div class="flex h-screen bg-gray-50">
@@ -679,13 +814,9 @@ def create_templates():
                 <i class="fa fa-chart-pie text-primary-600 w-5"></i>
                 <span>控制台</span>
             </a>
-            <a href="#config" onclick="showSection('config')" class="nav-item flex items-center space-x-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-lg transition">
-                <i class="fa fa-cog text-gray-400 w-5"></i>
-                <span>机器人配置</span>
-            </a>
-            <a href="#keywords" onclick="showSection('keywords')" class="nav-item flex items-center space-x-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-lg transition">
-                <i class="fa fa-key text-gray-400 w-5"></i>
-                <span>关键词管理</span>
+            <a href="#accounts" onclick="showSection('accounts')" class="nav-item flex items-center space-x-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-lg transition">
+                <i class="fa fa-users text-gray-400 w-5"></i>
+                <span>多账号管理</span>
             </a>
             <a href="#logs" onclick="showSection('logs')" class="nav-item flex items-center space-x-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-lg transition">
                 <i class="fa fa-terminal text-gray-400 w-5"></i>
@@ -723,7 +854,7 @@ def create_templates():
             </div>
 
             <!-- 状态卡片 -->
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 lg:gap-6 mb-6">
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 lg:gap-6 mb-6">
                 <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 card-hover">
                     <div class="flex items-center">
                         <div class="p-3 rounded-xl bg-blue-100 text-blue-600">
@@ -739,11 +870,11 @@ def create_templates():
                 <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 card-hover">
                     <div class="flex items-center">
                         <div class="p-3 rounded-xl bg-green-100 text-green-600">
-                            <i class="fa fa-key text-xl"></i>
+                            <i class="fa fa-users text-xl"></i>
                         </div>
                         <div class="ml-4">
-                            <h3 class="text-sm font-medium text-gray-600">关键词数量</h3>
-                            <p id="keyword-count" class="text-2xl font-semibold text-gray-800">0</p>
+                            <h3 class="text-sm font-medium text-gray-600">账号总数</h3>
+                            <p id="total-accounts-count" class="text-2xl font-semibold text-gray-800">0</p>
                         </div>
                     </div>
                 </div>
@@ -751,11 +882,23 @@ def create_templates():
                 <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 card-hover">
                     <div class="flex items-center">
                         <div class="p-3 rounded-xl bg-purple-100 text-purple-600">
-                            <i class="fa fa-at text-xl"></i>
+                            <i class="fa fa-play-circle text-xl"></i>
                         </div>
                         <div class="ml-4">
-                            <h3 class="text-sm font-medium text-gray-600">艾特用户</h3>
-                            <p id="at-user-status" class="text-2xl font-semibold text-gray-800">--</p>
+                            <h3 class="text-sm font-medium text-gray-600">启用账号</h3>
+                            <p id="enabled-accounts-count" class="text-2xl font-semibold text-gray-800">0</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 card-hover">
+                    <div class="flex items-center">
+                        <div class="p-3 rounded-xl bg-orange-100 text-orange-600">
+                            <i class="fa fa-key text-xl"></i>
+                        </div>
+                        <div class="ml-4">
+                            <h3 class="text-sm font-medium text-gray-600">全局关键词</h3>
+                            <p id="global-keywords-count" class="text-2xl font-semibold text-gray-800">0</p>
                         </div>
                     </div>
                 </div>
@@ -773,6 +916,10 @@ def create_templates():
                             class="flex items-center justify-center px-6 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-50 disabled:cursor-not-allowed transition transform hover:-translate-y-0.5">
                         <i class="fa fa-stop mr-2"></i>停止机器人
                     </button>
+                    <button id="restart-btn" onclick="restartBot()" 
+                            class="flex items-center justify-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition transform hover:-translate-y-0.5">
+                        <i class="fa fa-redo mr-2"></i>重启机器人
+                    </button>
                 </div>
             </div>
 
@@ -781,17 +928,10 @@ def create_templates():
                 <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
                     <h3 class="text-lg font-medium text-gray-800 mb-4">快速操作</h3>
                     <div class="space-y-3">
-                        <button onclick="showSection('config')" class="w-full flex items-center justify-between p-3 text-left bg-gray-50 hover:bg-gray-100 rounded-lg transition">
+                        <button onclick="showSection('accounts')" class="w-full flex items-center justify-between p-3 text-left bg-gray-50 hover:bg-gray-100 rounded-lg transition">
                             <div class="flex items-center space-x-3">
-                                <i class="fa fa-cog text-gray-400"></i>
-                                <span>修改配置</span>
-                            </div>
-                            <i class="fa fa-chevron-right text-gray-400"></i>
-                        </button>
-                        <button onclick="showSection('keywords')" class="w-full flex items-center justify-between p-3 text-left bg-gray-50 hover:bg-gray-100 rounded-lg transition">
-                            <div class="flex items-center space-x-3">
-                                <i class="fa fa-key text-gray-400"></i>
-                                <span>管理关键词</span>
+                                <i class="fa fa-users text-gray-400"></i>
+                                <span>管理账号</span>
                             </div>
                             <i class="fa fa-chevron-right text-gray-400"></i>
                         </button>
@@ -810,154 +950,72 @@ def create_templates():
                     <div class="space-y-2 text-sm">
                         <div class="flex justify-between">
                             <span class="text-gray-600">面板版本</span>
-                            <span class="font-medium">v1.0.1</span>
+                            <span class="font-medium">v2.1.0</span>
                         </div>
                         <div class="flex justify-between">
                             <span class="text-gray-600">运行时间</span>
                             <span id="uptime" class="font-medium">--</span>
                         </div>
                         <div class="flex justify-between">
-                            <span class="text-gray-600">日志数量</span>
-                            <span id="log-count" class="font-medium">--</span>
+                            <span class="text-gray-600">最后更新</span>
+                            <span id="last-update" class="font-medium">--</span>
                         </div>
                     </div>
                 </div>
             </div>
         </div>
 
-        <!-- 配置管理 -->
-        <div id="config" class="section p-4 lg:p-6" style="display: none;">
+        <!-- 多账号管理 -->
+        <div id="accounts" class="section p-4 lg:p-6" style="display: none;">
             <div class="mb-6">
-                <div class="flex items-center">
-                    <!-- 移动端菜单按钮 - 放在标题栏左边 -->
-                    <button class="mobile-menu-button lg:hidden mr-3 p-2 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 transition">
-                        <i class="fa fa-bars"></i>
-                    </button>
-                    <div>
-                        <h2 class="text-2xl lg:text-3xl font-bold text-gray-800">机器人配置</h2>
-                        <p class="text-gray-600 mt-2">修改B站账号相关配置</p>
-                    </div>
-                </div>
-            </div>
-
-            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-                <form id="config-form">
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 lg:gap-6">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">SESSDATA</label>
-                            <input type="text" name="config_sessdata" 
-                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">BILI_JCT</label>
-                            <input type="text" name="config_bili_jct" 
-                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">SELF_UID</label>
-                            <input type="number" name="config_self_uid" 
-                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-2">DEVICE_ID</label>
-                            <input type="text" name="config_device_id" 
-                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition">
-                        </div>
-                    </div>
-                    
-                    <!-- 艾特用户开关 -->
-                    <div class="mt-6 pt-6 border-t border-gray-200">
-                        <div class="flex items-center justify-between">
-                            <div>
-                                <h3 class="text-lg font-medium text-gray-800 mb-2">艾特用户设置</h3>
-                                <p class="text-sm text-gray-600">开启后，机器人回复时会@发送消息的用户</p>
-                            </div>
-                            <label class="switch">
-                                <input type="checkbox" id="at-user-switch">
-                                <span class="slider"></span>
-                            </label>
-                        </div>
-                        <div class="mt-3 bg-blue-50 border border-blue-200 rounded-lg p-4">
-                            <div class="flex items-start">
-                                <i class="fa fa-info-circle text-blue-500 mt-0.5 mr-2"></i>
-                                <p class="text-sm text-blue-700">
-                                    <strong>提示：</strong>如需使用艾特功能，请在关键词回复内容的任意位置添加 <code class="bg-blue-100 px-1 rounded">[at_user]</code>，否则不会生效。
-                                    例如："你好[at_user]，有什么可以帮助你的吗？"
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-                    
-                    <div class="mt-6">
-                        <button type="submit" 
-                                class="px-6 py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 transition transform hover:-translate-y-0.5">
-                            <i class="fa fa-save mr-2"></i>保存配置(重启生效)
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center">
+                        <button class="mobile-menu-button lg:hidden mr-3 p-2 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 transition">
+                            <i class="fa fa-bars"></i>
                         </button>
+                        <div>
+                            <h2 class="text-2xl lg:text-3xl font-bold text-gray-800">多账号管理</h2>
+                            <p class="text-gray-600 mt-2">管理多个B站账号的自动回复</p>
+                        </div>
                     </div>
-                </form>
-            </div>
-        </div>
-
-        <!-- 关键词管理 -->
-        <div id="keywords" class="section p-4 lg:p-6" style="display: none;">
-            <div class="mb-6">
-                <div class="flex items-center">
-                    <!-- 移动端菜单按钮 - 放在标题栏左边 -->
-                    <button class="mobile-menu-button lg:hidden mr-3 p-2 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 transition">
-                        <i class="fa fa-bars"></i>
+                    <button onclick="showAddAccountModal()" 
+                            class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 transition flex items-center">
+                        <i class="fa fa-plus mr-2"></i>添加账号
                     </button>
-                    <div>
-                        <h2 class="text-2xl lg:text-3xl font-bold text-gray-800">关键词管理</h2>
-                        <p class="text-gray-600 mt-2">添加和管理自动回复关键词</p>
-                    </div>
                 </div>
             </div>
 
-            <!-- 添加关键词表单 -->
-            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
-                <h3 class="text-lg font-medium text-gray-800 mb-4">添加新关键词</h3>
-                <form id="add-keyword-form" class="grid grid-cols-1 lg:grid-cols-5 gap-4">
-                    <div class="lg:col-span-2">
-                        <label class="block text-sm font-medium text-gray-700 mb-2">关键词</label>
-                        <input type="text" name="keyword" required
-                               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
-                               placeholder="例如: 你好">
-                    </div>
-                    <div class="lg:col-span-2">
-                        <label class="block text-sm font-medium text-gray-700 mb-2">回复内容</label>
-                        <input type="text" name="reply" required
-                               class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
-                               placeholder="例如: 你好，我是自动回复机器人">
-                    </div>
-                    <div class="lg:col-span-1 flex items-end">
-                        <button type="submit" 
-                                class="w-full px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 transition transform hover:-translate-y-0.5">
-                            <i class="fa fa-plus mr-2"></i>添加
-                        </button>
-                    </div>
-                </form>
-                <!-- 艾特用户提示 -->
-                <div class="mt-4 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
-                    <div class="flex items-start">
-                        <i class="fa fa-exclamation-circle text-yellow-500 mt-0.5 mr-2"></i>
-                        <p class="text-sm text-yellow-700">
-                            <strong>注意：</strong>如需在回复中@用户，请在回复内容中添加 <code class="bg-yellow-100 px-1 rounded">[at_user]</code>。
-                            例如："你好[at_user]，有什么可以帮助你的吗？" - 这会在回复时自动替换为用户的昵称。
-                        </p>
-                    </div>
+            <!-- 账号列表 -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 mb-6">
+                <div class="px-6 py-4 border-b border-gray-200">
+                    <h3 class="text-lg font-medium text-gray-800">账号列表</h3>
                 </div>
-            </div>
-
-            <!-- 关键词列表 -->
-            <div class="bg-white rounded-xl shadow-sm border border-gray-100">
-                <div class="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-                    <h3 class="text-lg font-medium text-gray-800">关键词列表</h3>
-                    <span class="text-sm text-gray-500" id="keywords-count">共 0 个关键词</span>
-                </div>
-                <div id="keywords-list" class="p-6">
+                <div id="accounts-list" class="p-6">
                     <div class="text-center text-gray-500 py-8">
                         <i class="fa fa-spinner fa-spin text-2xl mb-2"></i>
                         <p>加载中...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 全局关键词管理 -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100">
+                <div class="px-6 py-4 border-b border-gray-200">
+                    <h3 class="text-lg font-medium text-gray-800">全局关键词</h3>
+                    <p class="text-sm text-gray-600 mt-1">这些关键词对所有账号生效</p>
+                </div>
+                <div class="p-6">
+                    <div id="global-keywords-list">
+                        <div class="text-center text-gray-500 py-4">
+                            <i class="fa fa-spinner fa-spin text-xl mb-2"></i>
+                            <p>加载中...</p>
+                        </div>
+                    </div>
+                    <div class="mt-4">
+                        <button onclick="showAddGlobalKeywordModal()" 
+                                class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition flex items-center">
+                            <i class="fa fa-plus mr-2"></i>添加全局关键词
+                        </button>
                     </div>
                 </div>
             </div>
@@ -967,7 +1025,6 @@ def create_templates():
         <div id="logs" class="section p-4 lg:p-6" style="display: none;">
             <div class="mb-6">
                 <div class="flex items-center">
-                    <!-- 移动端菜单按钮 - 放在标题栏左边 -->
                     <button class="mobile-menu-button lg:hidden mr-3 p-2 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 transition">
                         <i class="fa fa-bars"></i>
                     </button>
@@ -1063,7 +1120,6 @@ def create_templates():
         <div id="admin" class="section p-4 lg:p-6" style="display: none;">
             <div class="mb-6">
                 <div class="flex items-center">
-                    <!-- 移动端菜单按钮 - 放在标题栏左边 -->
                     <button class="mobile-menu-button lg:hidden mr-3 p-2 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 transition">
                         <i class="fa fa-bars"></i>
                     </button>
@@ -1114,13 +1170,198 @@ def create_templates():
     </div>
 </div>
 
-<script>
-// 修复正则表达式转义问题
-function parseConfigKey(key) {
-    const match = key.match(/config_([a-z_]+)/);
-    return match ? match[1] : null;
-}
+<!-- 添加账号模态框 -->
+<div id="add-account-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden">
+    <div class="flex items-center justify-center min-h-screen p-4">
+        <div class="bg-white rounded-xl shadow-lg w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+            <div class="p-6 border-b border-gray-200">
+                <h3 class="text-xl font-bold text-gray-800">添加新账号</h3>
+            </div>
+            <div class="p-6">
+                <form id="add-account-form">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">账号名称</label>
+                            <input type="text" name="name" required
+                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
+                                   placeholder="例如: 主账号">
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">SESSDATA</label>
+                                <input type="text" name="sessdata" required
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">BILI_JCT</label>
+                                <input type="text" name="bili_jct" required
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition">
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">SELF_UID</label>
+                                <input type="number" name="self_uid" required
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">DEVICE_ID</label>
+                                <input type="text" name="device_id" required
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
+                                       value="">
+                            </div>
+                        </div>
+                        <div class="flex items-center justify-between space-x-4">
+                            <div class="flex items-center">
+                                <input type="checkbox" name="enabled" id="account-enabled" checked
+                                       class="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500">
+                                <label for="account-enabled" class="ml-2 text-sm text-gray-700">启用此账号</label>
+                            </div>
+                            <div class="flex items-center space-x-4">
+                                <div class="flex items-center">
+                                    <input type="checkbox" name="at_user" id="account-at-user"
+                                           class="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500">
+                                    <label for="account-at-user" class="ml-2 text-sm text-gray-700">艾特用户</label>
+                                </div>
+                                <div class="flex items-center">
+                                    <input type="checkbox" name="auto_focus" id="account-auto-focus"
+                                           class="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500">
+                                    <label for="account-auto-focus" class="ml-2 text-sm text-gray-700">自动关注</label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-6 flex justify-end space-x-3">
+                        <button type="button" onclick="hideAddAccountModal()"
+                                class="px-4 py-2 text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition">
+                            取消
+                        </button>
+                        <button type="submit"
+                                class="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 transition">
+                            添加账号
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
 
+<!-- 编辑账号模态框 -->
+<div id="edit-account-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden">
+    <div class="flex items-center justify-center min-h-screen p-4">
+        <div class="bg-white rounded-xl shadow-lg w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div class="p-6 border-b border-gray-200">
+                <h3 class="text-xl font-bold text-gray-800">编辑账号</h3>
+            </div>
+            <div class="p-6">
+                <form id="edit-account-form">
+                    <input type="hidden" id="edit-account-index" name="account_index">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">账号名称</label>
+                            <input type="text" id="edit-account-name" name="name" required
+                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
+                                   placeholder="例如: 主账号">
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">SESSDATA</label>
+                                <input type="text" id="edit-account-sessdata" name="sessdata" required
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">BILI_JCT</label>
+                                <input type="text" id="edit-account-bili_jct" name="bili_jct" required
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition">
+                            </div>
+                        </div>
+                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">SELF_UID</label>
+                                <input type="number" id="edit-account-self_uid" name="self_uid" required
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">DEVICE_ID</label>
+                                <input type="text" id="edit-account-device_id" name="device_id" required
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition">
+                            </div>
+                        </div>
+                        <div class="flex items-center justify-between space-x-4">
+                            <div class="flex items-center">
+                                <input type="checkbox" id="edit-account-enabled" name="enabled"
+                                       class="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500">
+                                <label for="edit-account-enabled" class="ml-2 text-sm text-gray-700">启用此账号</label>
+                            </div>
+                            <div class="flex items-center space-x-4">
+                                <div class="flex items-center">
+                                    <input type="checkbox" id="edit-account-at-user" name="at_user"
+                                           class="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500">
+                                    <label for="edit-account-at-user" class="ml-2 text-sm text-gray-700">艾特用户</label>
+                                </div>
+                                <div class="flex items-center">
+                                    <input type="checkbox" id="edit-account-auto-focus" name="auto_focus"
+                                           class="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500">
+                                    <label for="edit-account-auto-focus" class="ml-2 text-sm text-gray-700">自动关注</label>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 账号关键词管理 -->
+                        <div class="mt-6 pt-6 border-t border-gray-200">
+                            <h4 class="text-lg font-medium text-gray-800 mb-4">账号关键词管理</h4>
+                            
+                            <!-- 添加关键词表单 -->
+                            <div class="bg-gray-50 rounded-lg p-4 mb-4">
+                                <h5 class="text-md font-medium text-gray-700 mb-3">添加新关键词</h5>
+                                <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
+                                    <div class="lg:col-span-2">
+                                        <input type="text" id="edit-account-keyword-input" 
+                                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
+                                               placeholder="关键词">
+                                    </div>
+                                    <div class="lg:col-span-2">
+                                        <input type="text" id="edit-account-reply-input"
+                                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
+                                               placeholder="回复内容">
+                                    </div>
+                                    <div class="lg:col-span-1">
+                                        <button type="button" onclick="addAccountKeyword()"
+                                                class="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 transition">
+                                            <i class="fa fa-plus mr-1"></i>添加
+                                        </button>
+                                    </div>
+                                </div>
+                                <!-- 艾特用户提示 -->
+                                <div class="mt-2 text-sm text-gray-600">
+                                    提示：在回复内容中使用 <code class="bg-gray-200 px-1 rounded">[at_user]</code> 来@用户
+                                </div>
+                            </div>
+
+                            <!-- 关键词列表 -->
+                            <div id="edit-account-keywords-list" class="space-y-2 max-h-60 overflow-y-auto">
+                                <!-- 关键词列表将在这里动态生成 -->
+                            </div>
+                        </div>
+                    </div>
+                    <div class="mt-6 flex justify-end space-x-3">
+                        <button type="button" onclick="hideEditAccountModal()"
+                                class="px-4 py-2 text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition">
+                            取消
+                        </button>
+                        <button type="submit"
+                                class="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 transition">
+                            保存修改
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
 // 移动端菜单控制
 document.addEventListener('DOMContentLoaded', function() {
     // 为所有移动端菜单按钮添加事件监听
@@ -1463,43 +1704,455 @@ function clearAllLogs() {
     }
 }
 
-// 更新艾特用户设置
-function updateAtUser(value) {
-    fetch('/api/update_atuser', {
+// 多账号管理功能
+function showAddAccountModal() {
+    // 生成随机的DEVICE_ID
+    const deviceId = generateDeviceId();
+    document.querySelector('input[name="device_id"]').value = deviceId;
+    
+    document.getElementById('add-account-modal').classList.remove('hidden');
+}
+
+function hideAddAccountModal() {
+    document.getElementById('add-account-modal').classList.add('hidden');
+}
+
+function generateDeviceId() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0;
+        const v = c == 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    }).toUpperCase();
+}
+
+function loadAccounts() {
+    fetch('/api/get_accounts')
+        .then(response => response.json())
+        .then(data => {
+            updateAccountsList(data.accounts);
+            updateGlobalKeywordsList(data.global_keywords);
+        })
+        .catch(error => {
+            console.error('获取账号列表失败:', error);
+        });
+}
+
+function updateAccountsList(accounts) {
+    const container = document.getElementById('accounts-list');
+    if (!container) return;
+    
+    if (!accounts || accounts.length === 0) {
+        container.innerHTML = `
+            <div class="text-center text-gray-500 py-8">
+                <i class="fa fa-users text-3xl mb-3"></i>
+                <p>暂无账号</p>
+                <p class="text-sm mt-2">点击右上角"添加账号"按钮来添加第一个账号</p>
+            </div>
+        `;
+        return;
+    }
+    
+    container.innerHTML = accounts.map((account, index) => `
+        <div class="border border-gray-200 rounded-lg p-4 mb-4 bg-white hover:bg-gray-50 transition">
+            <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center space-x-3">
+                    <div class="w-3 h-3 rounded-full ${account.enabled ? 'bg-green-500' : 'bg-gray-400'}"></div>
+                    <h4 class="text-lg font-medium text-gray-800">${account.name}</h4>
+                    <span class="text-sm px-2 py-1 bg-blue-100 text-blue-800 rounded">UID: ${account.config.self_uid}</span>
+                </div>
+                <div class="flex items-center space-x-2">
+                    <button onclick="toggleAccount(${index})" 
+                            class="px-3 py-1 text-sm ${account.enabled ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-green-600 hover:bg-green-700'} text-white rounded transition">
+                        ${account.enabled ? '禁用' : '启用'}
+                    </button>
+                    <button onclick="editAccount(${index})" 
+                            class="px-3 py-1 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded transition">
+                        编辑
+                    </button>
+                    <button onclick="deleteAccount(${index})" 
+                            class="px-3 py-1 text-sm bg-red-600 hover:bg-red-700 text-white rounded transition">
+                        删除
+                    </button>
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                <div>
+                    <span class="text-gray-600">艾特用户:</span>
+                    <span class="ml-2 font-medium ${account.at_user ? 'text-green-600' : 'text-red-600'}">
+                        ${account.at_user ? '开启' : '关闭'}
+                    </span>
+                </div>
+                <div>
+                    <span class="text-gray-600">自动关注:</span>
+                    <span class="ml-2 font-medium ${account.auto_focus ? 'text-green-600' : 'text-red-600'}">
+                        ${account.auto_focus ? '开启' : '关闭'}
+                    </span>
+                </div>
+                <div>
+                    <span class="text-gray-600">关键词数量:</span>
+                    <span class="ml-2 font-medium">${Object.keys(account.keyword || {}).length}</span>
+                </div>
+            </div>
+            
+            ${Object.keys(account.keyword || {}).length > 0 ? `
+            <div class="mt-3 pt-3 border-t border-gray-200">
+                <h5 class="text-sm font-medium text-gray-700 mb-2">账号关键词:</h5>
+                <div class="space-y-1">
+                    ${Object.entries(account.keyword).map(([keyword, reply]) => `
+                        <div class="flex justify-between text-sm">
+                            <span class="text-gray-800">${keyword}</span>
+                            <span class="text-gray-600">→ ${reply}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+            ` : ''}
+        </div>
+    `).join('');
+}
+
+function updateGlobalKeywordsList(keywords) {
+    const container = document.getElementById('global-keywords-list');
+    if (!container) return;
+    
+    if (!keywords || Object.keys(keywords).length === 0) {
+        container.innerHTML = '<div class="text-center text-gray-500 py-4">暂无全局关键词</div>';
+        return;
+    }
+    
+    container.innerHTML = Object.entries(keywords).map(([keyword, reply]) => `
+        <div class="flex items-center justify-between p-3 border border-gray-200 rounded-lg mb-2">
+            <div class="flex-1">
+                <div class="font-medium text-gray-800">${keyword}</div>
+                <div class="text-sm text-gray-600">${reply}</div>
+            </div>
+            <button onclick="deleteGlobalKeyword('${keyword}')" 
+                    class="ml-4 px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700 transition">
+                <i class="fa fa-trash"></i>
+            </button>
+        </div>
+    `).join('');
+}
+
+function toggleAccount(index) {
+    fetch(`/api/toggle_account/${index}`, { method: 'POST' })
+        .then(response => response.json())
+        .then(data => {
+            showNotification(data.message, data.success ? 'success' : 'error');
+            if (data.success) {
+                loadAccounts();
+                fetchBotStatus(); // 更新状态显示
+            }
+        })
+        .catch(error => {
+            console.error('切换账号状态失败:', error);
+            showNotification('操作失败，请检查网络连接', 'error');
+        });
+}
+
+let currentEditingAccountIndex = -1;
+
+function editAccount(index) {
+    currentEditingAccountIndex = index;
+    
+    fetch('/api/get_accounts')
+        .then(response => response.json())
+        .then(data => {
+            const account = data.accounts[index];
+            if (account) {
+                // 填充表单数据
+                document.getElementById('edit-account-index').value = index;
+                document.getElementById('edit-account-name').value = account.name || '';
+                document.getElementById('edit-account-sessdata').value = account.config.sessdata || '';
+                document.getElementById('edit-account-bili_jct').value = account.config.bili_jct || '';
+                document.getElementById('edit-account-self_uid').value = account.config.self_uid || '';
+                document.getElementById('edit-account-device_id').value = account.config.device_id || '';
+                document.getElementById('edit-account-enabled').checked = account.enabled || false;
+                document.getElementById('edit-account-at-user').checked = account.at_user || false;
+                document.getElementById('edit-account-auto-focus').checked = account.auto_focus || false;
+                
+                // 更新关键词列表
+                updateAccountKeywordsList(account.keyword || {});
+                
+                // 显示模态框
+                document.getElementById('edit-account-modal').classList.remove('hidden');
+            }
+        })
+        .catch(error => {
+            console.error('获取账号详情失败:', error);
+            showNotification('获取账号详情失败', 'error');
+        });
+}
+
+function hideEditAccountModal() {
+    document.getElementById('edit-account-modal').classList.add('hidden');
+    currentEditingAccountIndex = -1;
+}
+
+function updateAccountKeywordsList(keywords) {
+    const container = document.getElementById('edit-account-keywords-list');
+    if (!container) return;
+    
+    if (!keywords || Object.keys(keywords).length === 0) {
+        container.innerHTML = '<div class="text-center text-gray-500 py-4">暂无关键词</div>';
+        return;
+    }
+    
+    container.innerHTML = Object.entries(keywords).map(([keyword, reply]) => `
+        <div class="flex items-center justify-between p-3 border border-gray-200 rounded-lg bg-white">
+            <div class="flex-1">
+                <div class="font-medium text-gray-800">${keyword}</div>
+                <div class="text-sm text-gray-600">${reply}</div>
+            </div>
+            <button onclick="deleteAccountKeyword('${keyword}')" 
+                    class="ml-4 px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700 transition">
+                <i class="fa fa-trash"></i>
+            </button>
+        </div>
+    `).join('');
+}
+
+function addAccountKeyword() {
+    const keywordInput = document.getElementById('edit-account-keyword-input');
+    const replyInput = document.getElementById('edit-account-reply-input');
+    
+    const keyword = keywordInput.value.trim();
+    const reply = replyInput.value.trim();
+    
+    if (!keyword || !reply) {
+        showNotification('关键词和回复内容不能为空', 'error');
+        return;
+    }
+    
+    if (currentEditingAccountIndex === -1) {
+        showNotification('请先选择要编辑的账号', 'error');
+        return;
+    }
+    
+    fetch(`/api/add_account_keyword/${currentEditingAccountIndex}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ at_user: value })
+        body: JSON.stringify({ keyword, reply })
     })
     .then(response => response.json())
     .then(data => {
         showNotification(data.message, data.success ? 'success' : 'error');
         if (data.success) {
-            // 更新状态显示
-            updateAtUserStatus(value);
+            // 清空输入框
+            keywordInput.value = '';
+            replyInput.value = '';
+            
+            // 重新加载账号数据以更新关键词列表
+            fetch('/api/get_accounts')
+                .then(response => response.json())
+                .then(data => {
+                    const account = data.accounts[currentEditingAccountIndex];
+                    if (account) {
+                        updateAccountKeywordsList(account.keyword || {});
+                    }
+                });
         }
     })
     .catch(error => {
-        console.error('更新艾特用户设置失败:', error);
-        showNotification('更新艾特用户设置失败，请检查网络连接', 'error');
+        console.error('添加关键词失败:', error);
+        showNotification('添加关键词失败，请检查网络连接', 'error');
     });
 }
 
-// 更新艾特用户状态显示
-function updateAtUserStatus(enabled) {
-    const statusElement = document.getElementById('at-user-status');
-    const switchElement = document.getElementById('at-user-switch');
+function deleteAccountKeyword(keyword) {
+    if (currentEditingAccountIndex === -1) {
+        showNotification('请先选择要编辑的账号', 'error');
+        return;
+    }
     
-    if (statusElement) {
-        if (enabled) {
-            statusElement.innerHTML = '<span class="text-green-600 flex items-center"><i class="fa fa-check-circle mr-2"></i>已开启</span>';
-        } else {
-            statusElement.innerHTML = '<span class="text-red-600 flex items-center"><i class="fa fa-times-circle mr-2"></i>已关闭</span>';
+    if (confirm(`确定要删除关键词 "${keyword}" 吗？`)) {
+        fetch(`/api/delete_account_keyword/${currentEditingAccountIndex}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ keyword })
+        })
+        .then(response => response.json())
+        .then(data => {
+            showNotification(data.message, data.success ? 'success' : 'error');
+            if (data.success) {
+                // 重新加载账号数据以更新关键词列表
+                fetch('/api/get_accounts')
+                    .then(response => response.json())
+                    .then(data => {
+                        const account = data.accounts[currentEditingAccountIndex];
+                        if (account) {
+                            updateAccountKeywordsList(account.keyword || {});
+                        }
+                    });
+            }
+        })
+        .catch(error => {
+            console.error('删除关键词失败:', error);
+            showNotification('删除关键词失败，请检查网络连接', 'error');
+        });
+    }
+}
+
+function deleteAccount(index) {
+    if (confirm('确定要删除这个账号吗？此操作不可恢复！')) {
+        fetch(`/api/delete_account/${index}`, { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                showNotification(data.message, data.success ? 'success' : 'error');
+                if (data.success) {
+                    loadAccounts();
+                    fetchBotStatus(); // 更新状态显示
+                }
+            })
+            .catch(error => {
+                console.error('删除账号失败:', error);
+                showNotification('删除失败，请检查网络连接', 'error');
+            });
+    }
+}
+
+function deleteGlobalKeyword(keyword) {
+    if (confirm(`确定要删除全局关键词 "${keyword}" 吗？`)) {
+        fetch('/api/get_accounts')
+            .then(response => response.json())
+            .then(data => {
+                const globalKeywords = data.global_keywords || {};
+                delete globalKeywords[keyword];
+                
+                return fetch('/api/update_global_keywords', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(globalKeywords)
+                });
+            })
+            .then(response => response.json())
+            .then(data => {
+                showNotification(data.message, data.success ? 'success' : 'error');
+                if (data.success) {
+                    loadAccounts();
+                    fetchBotStatus(); // 更新状态显示
+                }
+            })
+            .catch(error => {
+                console.error('删除全局关键词失败:', error);
+                showNotification('删除失败，请检查网络连接', 'error');
+            });
+    }
+}
+
+function showAddGlobalKeywordModal() {
+    const keyword = prompt('请输入关键词:');
+    if (keyword) {
+        const reply = prompt('请输入回复内容:');
+        if (reply) {
+            fetch('/api/get_accounts')
+                .then(response => response.json())
+                .then(data => {
+                    const globalKeywords = data.global_keywords || {};
+                    globalKeywords[keyword] = reply;
+                    
+                    return fetch('/api/update_global_keywords', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(globalKeywords)
+                    });
+                })
+                .then(response => response.json())
+                .then(data => {
+                    showNotification(data.message, data.success ? 'success' : 'error');
+                    if (data.success) {
+                        loadAccounts();
+                        fetchBotStatus(); // 更新状态显示
+                    }
+                })
+                .catch(error => {
+                    console.error('添加全局关键词失败:', error);
+                    showNotification('添加失败，请检查网络连接', 'error');
+                });
         }
     }
-    
-    if (switchElement) {
-        switchElement.checked = enabled;
-    }
+}
+
+// 添加账号表单提交
+const addAccountForm = document.getElementById('add-account-form');
+if (addAccountForm) {
+    addAccountForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        
+        const accountData = {
+            name: formData.get('name'),
+            sessdata: formData.get('sessdata'),
+            bili_jct: formData.get('bili_jct'),
+            self_uid: parseInt(formData.get('self_uid')),
+            device_id: formData.get('device_id'),
+            enabled: formData.get('enabled') === 'on',
+            at_user: formData.get('at_user') === 'on',
+            auto_focus: formData.get('auto_focus') === 'on',
+            keywords: {}
+        };
+        
+        fetch('/api/add_account', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(accountData)
+        })
+        .then(response => response.json())
+        .then(data => {
+            showNotification(data.message, data.success ? 'success' : 'error');
+            if (data.success) {
+                hideAddAccountModal();
+                this.reset();
+                loadAccounts();
+                fetchBotStatus(); // 更新状态显示
+            }
+        })
+        .catch(error => {
+            console.error('添加账号失败:', error);
+            showNotification('添加失败，请检查网络连接', 'error');
+        });
+    });
+}
+
+// 编辑账号表单提交
+const editAccountForm = document.getElementById('edit-account-form');
+if (editAccountForm) {
+    editAccountForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        const formData = new FormData(this);
+        const accountIndex = parseInt(formData.get('account_index'));
+        
+        const accountData = {
+            name: formData.get('name'),
+            sessdata: formData.get('sessdata'),
+            bili_jct: formData.get('bili_jct'),
+            self_uid: parseInt(formData.get('self_uid')),
+            device_id: formData.get('device_id'),
+            enabled: formData.get('enabled') === 'on',
+            at_user: formData.get('at_user') === 'on',
+            auto_focus: formData.get('auto_focus') === 'on'
+        };
+        
+        fetch(`/api/update_account/${accountIndex}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(accountData)
+        })
+        .then(response => response.json())
+        .then(data => {
+            showNotification(data.message, data.success ? 'success' : 'error');
+            if (data.success) {
+                hideEditAccountModal();
+                loadAccounts();
+                fetchBotStatus(); // 更新状态显示
+            }
+        })
+        .catch(error => {
+            console.error('更新账号失败:', error);
+            showNotification('更新失败，请检查网络连接', 'error');
+        });
+    });
 }
 
 // 获取机器人状态
@@ -1511,10 +2164,11 @@ function fetchBotStatus() {
             const statusText = document.getElementById('status-text');
             const startBtn = document.getElementById('start-btn');
             const stopBtn = document.getElementById('stop-btn');
-            const keywordCount = document.getElementById('keyword-count');
-            const keywordsCount = document.getElementById('keywords-count');
+            const restartBtn = document.getElementById('restart-btn');
+            const totalAccountsCount = document.getElementById('total-accounts-count');
+            const enabledAccountsCount = document.getElementById('enabled-accounts-count');
+            const globalKeywordsCount = document.getElementById('global-keywords-count');
             const lastUpdate = document.getElementById('last-update');
-            const logCount = document.getElementById('log-count');
             
             if (statusText) {
                 if (data.running) {
@@ -1526,25 +2180,24 @@ function fetchBotStatus() {
             
             if (startBtn) startBtn.disabled = data.running;
             if (stopBtn) stopBtn.disabled = !data.running;
+            if (restartBtn) restartBtn.disabled = !data.running;
             
-            // 更新关键词数量
-            const keywordCountValue = Object.keys(data.keywords || {}).length;
-            if (keywordCount) keywordCount.textContent = keywordCountValue;
-            if (keywordsCount) keywordsCount.textContent = `共 ${keywordCountValue} 个关键词`;
+            // 更新账号数量
+            if (totalAccountsCount) totalAccountsCount.textContent = data.total_accounts_count;
+            if (enabledAccountsCount) enabledAccountsCount.textContent = data.enabled_accounts_count;
             
-            // 更新艾特用户状态
-            updateAtUserStatus(data.at_user || false);
+            // 更新全局关键词数量
+            const globalKeywordsCountValue = Object.keys(data.global_keywords || {}).length;
+            if (globalKeywordsCount) globalKeywordsCount.textContent = globalKeywordsCountValue;
             
             // 更新最后更新时间
             if (lastUpdate) lastUpdate.textContent = new Date().toLocaleString();
             
-            // 更新系统信息
-            if (logCount) logCount.textContent = keywordCountValue;
-            
-            // 如果是在关键词页面，更新关键词列表
-            const keywordsSection = document.getElementById('keywords');
-            if (keywordsSection && keywordsSection.style.display !== 'none') {
-                updateKeywordsList(data.keywords);
+            // 如果是在账号管理页面，更新账号列表
+            const accountsSection = document.getElementById('accounts');
+            if (accountsSection && accountsSection.style.display !== 'none') {
+                updateAccountsList(data.accounts);
+                updateGlobalKeywordsList(data.global_keywords);
             }
         })
         .catch(error => {
@@ -1554,63 +2207,6 @@ function fetchBotStatus() {
                 statusText.innerHTML = '<span class="text-red-600">获取状态失败</span>';
             }
         });
-}
-
-// 更新配置表单
-function updateConfigForm(config) {
-    if (config) {
-        for (const key in config) {
-            const input = document.querySelector(`[name="config_${key}"]`);
-            if (input) {
-                input.value = config[key] || '';
-            }
-        }
-    }
-}
-
-function loadConfig() {
-    fetch('/api/bot_status')
-        .then(response => response.json())
-        .then(data => {
-            updateConfigForm(data.config);
-        })
-        .catch(error => {
-            console.error('获取机器人状态失败:', error);
-            const statusText = document.getElementById('status-text');
-            if (statusText) {
-                statusText.innerHTML = '<span class="text-red-600">获取状态失败</span>';
-            }
-        });
-}
-
-// 更新关键词列表
-function updateKeywordsList(keywords) {
-    const container = document.getElementById('keywords-list');
-    if (!container) return;
-    
-    if (!keywords || Object.keys(keywords).length === 0) {
-        container.innerHTML = '<div class="text-center text-gray-500 py-8"><i class="fa fa-inbox text-3xl mb-3"></i><p>暂无关键词</p></div>';
-        return;
-    }
-    
-    container.innerHTML = Object.entries(keywords).map(([keyword, reply]) => `
-        <div class="flex items-center justify-between p-4 border border-gray-200 rounded-lg mb-3 bg-white hover:bg-gray-50 transition">
-            <div class="flex-1">
-                <div class="font-medium text-gray-800 flex items-center">
-                    <i class="fa fa-key text-primary-600 mr-2"></i>
-                    ${keyword}
-                </div>
-                <div class="text-sm text-gray-600 mt-1 flex items-center">
-                    <i class="fa fa-reply text-gray-400 mr-2"></i>
-                    ${reply}
-                </div>
-            </div>
-            <button onclick="deleteKeyword('${keyword}')" 
-                    class="ml-4 px-3 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 transition transform hover:scale-105">
-                <i class="fa fa-trash"></i>
-            </button>
-        </div>
-    `).join('');
 }
 
 // 启动机器人
@@ -1645,14 +2241,9 @@ function stopBot() {
         });
 }
 
-// 删除关键词
-function deleteKeyword(keyword) {
-    if (confirm(`确定要删除关键词 "${keyword}" 吗？`)) {
-        fetch('/api/delete_keyword', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ keyword })
-        })
+// 重启机器人
+function restartBot() {
+    fetch('/api/restart_bot', { method: 'POST' })
         .then(response => response.json())
         .then(data => {
             showNotification(data.message, data.success ? 'success' : 'error');
@@ -1661,10 +2252,9 @@ function deleteKeyword(keyword) {
             }
         })
         .catch(error => {
-            console.error('删除关键词失败:', error);
-            showNotification('删除关键词失败，请检查网络连接', 'error');
+            console.error('重启机器人失败:', error);
+            showNotification('重启机器人失败，请检查网络连接', 'error');
         });
-    }
 }
 
 // 显示通知
@@ -1707,75 +2297,6 @@ function showNotification(message, type = 'info') {
     }, 5000);
 }
 
-// 表单提交处理
-const configForm = document.getElementById('config-form');
-if (configForm) {
-    configForm.addEventListener('submit', function(e) {
-        e.preventDefault();
-        const formData = new FormData(this);
-        const config = {};
-        
-        for (let [key, value] of formData.entries()) {
-            const configKey = parseConfigKey(key);
-            if (configKey) {
-                config[configKey] = value;
-            }
-        }
-        
-        fetch('/api/update_config', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(config)
-        })
-        .then(response => response.json())
-        .then(data => {
-            showNotification(data.message, data.success ? 'success' : 'error');
-            if (data.success) {
-                fetchBotStatus();
-            }
-        })
-        .catch(error => {
-            console.error('更新配置失败:', error);
-            showNotification('更新配置失败，请检查网络连接', 'error');
-        });
-    });
-}
-
-const addKeywordForm = document.getElementById('add-keyword-form');
-if (addKeywordForm) {
-    addKeywordForm.addEventListener('submit', function(e) {
-        e.preventDefault();
-        const formData = new FormData(this);
-        const data = {
-            keyword: formData.get('keyword'),
-            reply: formData.get('reply')
-        };
-        
-        if (!data.keyword.trim() || !data.reply.trim()) {
-            showNotification('关键词和回复内容不能为空', 'error');
-            return;
-        }
-        
-        fetch('/api/add_keyword', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data)
-        })
-        .then(response => response.json())
-        .then(data => {
-            showNotification(data.message, data.success ? 'success' : 'error');
-            if (data.success) {
-                this.reset();
-                fetchBotStatus();
-            }
-        })
-        .catch(error => {
-            console.error('添加关键词失败:', error);
-            showNotification('添加关键词失败，请检查网络连接', 'error');
-        });
-    });
-}
-
 const adminForm = document.getElementById('admin-form');
 if (adminForm) {
     adminForm.addEventListener('submit', function(e) {
@@ -1815,14 +2336,6 @@ if (adminForm) {
     });
 }
 
-// 艾特用户开关事件监听
-const atUserSwitch = document.getElementById('at-user-switch');
-if (atUserSwitch) {
-    atUserSwitch.addEventListener('change', function() {
-        updateAtUser(this.checked);
-    });
-}
-
 // 计算运行时间
 function updateUptime() {
     const startTime = new Date();
@@ -1846,7 +2359,7 @@ document.addEventListener('DOMContentLoaded', function() {
     setInterval(fetchBotStatus, 3000);
     fetchBotStatus();
     
-    loadConfig();
+    loadAccounts();
     
     // 初始化运行时间
     updateUptime();
@@ -1864,8 +2377,7 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 </script>
-{% endblock %}
-<!-- [file content end] -->''')
+{% endblock %}''')
 
 if __name__ == '__main__':
     # 创建模板文件
@@ -1880,4 +2392,3 @@ if __name__ == '__main__':
     
     # 关闭调试模式，避免重启
     app.run(debug=False, host='0.0.0.0', port=5000)
-# [file content end]
