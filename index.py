@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import requests
 import json
 import time
@@ -10,6 +11,20 @@ import sys
 import ConfigManage
 import init
 import os
+import threading
+import io
+
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+else:
+    # 对于旧版本，重新创建stdout流
+    sys.stdout = io.TextIOWrapper(
+        sys.stdout.buffer, 
+        encoding='utf-8',
+        errors='replace' if sys.stdout.errors == 'strict' else sys.stdout.errors,
+        newline=sys.stdout.newlines,
+        line_buffering=sys.stdout.line_buffering
+    )
 
 init.init_manage()
 config = ConfigManage.ConfigManager("config.json")
@@ -17,54 +32,63 @@ config = ConfigManage.ConfigManager("config.json")
 # 初始化colorama
 colorama.init(autoreset=True)
 
-SESSDATA = config.get("config")["sessdata"]
-BILI_JCT = config.get("config")["bili_jct"]
-SELF_UID = config.get("config")["self_uid"]
-DEVICE_ID = config.get("config")["device_id"]
-
 def clean_screen():
     if os.name == "nt":
         os.system("cls")
     else:
         os.system("clear")
 
-# 检查配置
-def inspect_config():
-    print(f"{Fore.BLUE}正在检查配置是否正确...")
-    if SESSDATA == "":
-        print(f"{Fore.RED}✗ {Fore.RED}SESSDATA未配置")
-        return False
-    
-    print(f"{Fore.GREEN}✓ {Fore.BLUE}SESSDATA正确")
-    
-    if BILI_JCT == "":
-        print(f"{Fore.RED}✗ {Fore.RED}BILI_JCT未配置")
-        return False
-    
-    print(f"{Fore.GREEN}✓ {Fore.BLUE}BILI_JCT正确")
-    
-    if SELF_UID == 0:
-        print(f"{Fore.RED}✗ {Fore.RED}SELF_UID未配置")
-        return False
-    
-    print(f"{Fore.GREEN}✓ {Fore.BLUE}SELF_UID正确")
-    
-    if DEVICE_ID == "":
-        print(f"{Fore.RED}✗ {Fore.RED}DEVICE_ID未配置")
-        return False
-    
-    print(f"{Fore.GREEN}✓ {Fore.BLUE}DEVICE_ID正确")
-    print(f"{Fore.GREEN}✓ {Fore.GREEN}检查完成，开始运行\n")
-    time.sleep(0.5)
-    clean_screen()
-    return True
+class BotManager:
+    def __init__(self):
+        self.bots = []
+        self.running = False
+        
+    def start_all(self):
+        """启动所有启用的机器人"""
+        if self.running:
+            return False
+            
+        self.running = True
+        accounts = config.get_accounts()
+        
+        for i, account in enumerate(accounts):
+            if account.get("enabled", True):
+                bot = SimpleBilibiliReply(
+                    account_name=account.get("name", f"账号{i+1}"),
+                    sessdata=account["config"]["sessdata"],
+                    bili_jct=account["config"]["bili_jct"],
+                    self_uid=account["config"]["self_uid"],
+                    device_id=account["config"]["device_id"],
+                    keywords=account.get("keyword", {}),
+                    at_user=account.get("at_user", False),
+                    auto_focus=account.get("auto_focus", False),
+                    poll_interval=5,
+                )
+                self.bots.append(bot)
+                
+                # 在新线程中启动机器人
+                thread = threading.Thread(target=bot.run, daemon=True)
+                thread.start()
+                
+        print(f"{Fore.GREEN}✓ 已启动 {len(self.bots)} 个机器人实例")
+        return True
+        
+    def stop_all(self):
+        """停止所有机器人"""
+        self.running = False
+        for bot in self.bots:
+            bot.stop()
+        self.bots.clear()
+        print(f"{Fore.GREEN}✓ 已停止所有机器人实例")
 
 class SimpleBilibiliReply:
-    def __init__(self, sessdata, bili_jct, self_uid, device_id, poll_interval=5):
+    def __init__(self, account_name, sessdata, bili_jct, self_uid, device_id, keywords, at_user, auto_focus, poll_interval=5):
+        self.account_name = account_name
         self.sessdata = sessdata
         self.bili_jct = bili_jct
         self.self_uid = self_uid
         self.poll_interval = poll_interval
+        self.running = False
         
         # 生成设备ID
         self.device_id = device_id
@@ -79,18 +103,22 @@ class SimpleBilibiliReply:
             "Cookie": f"SESSDATA={sessdata}; bili_jct={bili_jct}"
         }
         
-        # 设置自动回复关键词
-        self.keyword_reply = config.get("keyword")
+        # 设置自动回复关键词（账号特定 + 全局）
+        self.keyword_reply = keywords
+        global_keywords = config.get_global_keywords()
+        self.keyword_reply.update(global_keywords)
+        
+        self.at_user = at_user
+        self.auto_focus = auto_focus
         
         self.processed_msg_ids = set()
-        print(f"{Fore.GREEN}✓ {Fore.BLUE}哔哩哔哩私信自动回复机器人启动成功")
-        print(f"{Fore.GREEN}程序名称: {Fore.WHITE}哔哩哔哩私信机器人")
-        print(f"{Fore.GREEN}版本号: {Fore.WHITE}v1.0.3")
-        print(f"{Fore.GREEN}作者: {Fore.WHITE}淡意往事")
-        print(f"{Fore.GREEN}哔哩哔哩主页: {Fore.WHITE}https://b23.tv/tq8hoKu")
-        print(f"{Fore.GREEN}Github: {Fore.WHITE}https://github.com/7hello80")
-        print(f"{Fore.GREEN}启动时间: {Fore.WHITE}{time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"{Fore.GREEN}✓ {Fore.BLUE}[{self.account_name}] 哔哩哔哩私信自动回复机器人启动成功")
     
+    def stop(self):
+        """停止机器人"""
+        self.running = False
+
+    # 这里保留原有的所有方法，但修改日志输出以包含账号名称
     def get_sessions(self) -> List[Dict]:
         """获取会话列表"""
         url = "https://api.vc.bilibili.com/session_svr/v1/session_svr/get_sessions"
@@ -108,11 +136,33 @@ class SimpleBilibiliReply:
                 if data.get("code") == 0:
                     return data.get("data", {}).get("session_list", [])
                 else:
-                    print(f"{Fore.RED}✗ API错误: {data.get('message')}")
+                    print(f"{Fore.RED}✗ [{self.account_name}] API错误: {data.get('message')}")
         except Exception as e:
-            print(f"{Fore.RED}✗ 获取会话列表异常: {e}")
+            print(f"{Fore.RED}✗ [{self.account_name}] 获取会话列表异常: {e}")
         
         return []
+
+    # 修改所有方法，在日志输出中添加 [账号名称] 前缀
+    def Auto_focus(self, mid: int) -> Optional[Dict]:
+        url = "https://api.bilibili.com/x/relation/modify"
+        params = {
+            "fid": mid,
+            "act": 1,
+            "csrf": self.bili_jct
+        }
+        try:
+            response = requests.post(url, params, headers=self.headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                
+                if data.get("code") == 0:
+                    return True
+                else:
+                    return False
+        except Exception as e:
+            print(f"{Fore.RED}✗ [{self.account_name}] 关注失败: {e}")
+        
+        return None
 
     def get_userName(self, mid: int) -> Optional[Dict]:
         url = "https://api.bilibili.com/x/web-interface/card"
@@ -128,31 +178,30 @@ class SimpleBilibiliReply:
                 if data.get("code") == 0:
                     return data.get("data", {})
                 else:
-                    print(f"{Fore.RED}✗ 检索失败")
+                    print(f"{Fore.RED}✗ [{self.account_name}] 检索失败")
         except Exception as e:
-            print(f"{Fore.RED}✗ 获取失败: {e}")
+            print(f"{Fore.RED}✗ [{self.account_name}] 获取失败: {e}")
         
         return None
 
-    # 查询对方是否关注了我
     def check_user_relation(self, target_uid: int) -> Optional[Dict]:
         url = "https://api.bilibili.com/x/web-interface/relation"
         params = {
-            "mid": target_uid  # 目标用户的UID
+            "mid": target_uid
         }
         
         try:
             response = requests.get(url, params=params, headers=self.headers, timeout=10)
             if response.status_code == 200:
                 data = response.json()
-                print(f"{Fore.GREEN}✓ 关系检查API响应: {Fore.MAGENTA}{json.dumps(data, ensure_ascii=False)}")
+                print(f"{Fore.GREEN}✓ [{self.account_name}] 关系检查API响应: {Fore.MAGENTA}{json.dumps(data, ensure_ascii=False)}")
                 
                 if data.get("code") == 0:
                     return data.get("data", {})
                 else:
-                    print(f"{Fore.RED}✗ 关系检查API错误: {Fore.MAGENTA}{data.get('message')}")
+                    print(f"{Fore.RED}✗ [{self.account_name}] 关系检查API错误: {Fore.MAGENTA}{data.get('message')}")
         except Exception as e:
-            print(f"{Fore.RED}✗ 检查用户关系异常: {Fore.MAGENTA}{e}")
+            print(f"{Fore.RED}✗ [{self.account_name}] 检查用户关系异常: {Fore.MAGENTA}{e}")
         
         return None
 
@@ -161,19 +210,16 @@ class SimpleBilibiliReply:
         if not relation_data:
             return False
         
-        # 获取目标用户对我的关系
         relation = relation_data.get("be_relation", {})
         attribute = relation.get("attribute", 0)
         
-        print(f"{Fore.MAGENTA}用户 {target_uid} 对我的关注状态: attribute={attribute}")
+        print(f"{Fore.MAGENTA}[{self.account_name}] 用户 {target_uid} 对我的关注状态: attribute={attribute}")
         
-        # 检查目标用户是否关注了我
-        # attribute 为 2 或 6 表示关注了我
         if attribute in [2, 6]:
-            print(f"{Fore.MAGENTA}用户 {target_uid} 已关注您")
+            print(f"{Fore.MAGENTA}[{self.account_name}] 用户 {target_uid} 已关注您")
             return True
         else:
-            print(f"{Fore.RED}✗ 用户 {target_uid} 未关注您")
+            print(f"{Fore.RED}✗ [{self.account_name}] 用户 {target_uid} 未关注您")
             return False
 
     def extract_message_content(self, message_data: Dict) -> Optional[str]:
@@ -193,8 +239,6 @@ class SimpleBilibiliReply:
 
     def check_keywords(self, message: str) -> Optional[str]:
         """检查消息是否包含关键词"""
-        config = ConfigManage.ConfigManager("config.json")
-        self.keyword_reply = config.get("keyword")
         if not message:
             return None
             
@@ -210,18 +254,14 @@ class SimpleBilibiliReply:
         """发送消息"""
         url = "https://api.vc.bilibili.com/web_im/v1/web_im/send_msg"
         
-        # 生成时间戳和随机参数
         timestamp = int(time.time())
         
-        config = ConfigManage.ConfigManager("config.json")
-        
-        if config.get("at_user") == True:
+        if self.at_user:
             userinfo = self.get_userName(receiver_id)
             content_json = {"content": message.replace("[at_user]", userinfo.get("card")["name"])}
         else:
             content_json = {"content": message}
         
-        # 构建表单数据（按照您提供的格式）
         form_data = {
             'msg[sender_uid]': str(self.self_uid),
             'msg[receiver_type]': '1',
@@ -239,7 +279,6 @@ class SimpleBilibiliReply:
             'csrf': self.bili_jct
         }
         
-        # 构建URL参数
         params = {
             'w_sender_uid': str(self.self_uid),
             'w_receiver_id': str(receiver_id),
@@ -257,25 +296,24 @@ class SimpleBilibiliReply:
                 timeout=10
             )
             
-            print(f"{Fore.GREEN}✓ 发送消息响应状态: {Fore.MAGENTA}{response.status_code}")
+            print(f"{Fore.GREEN}✓ [{self.account_name}] 发送消息响应状态: {Fore.MAGENTA}{response.status_code}")
             
             if response.status_code == 200:
                 data = response.json()
-                print(f"{Fore.GREEN}✓ 发送消息响应内容: {Fore.MAGENTA}{data}")
+                print(f"{Fore.GREEN}✓ [{self.account_name}] 发送消息响应内容: {Fore.MAGENTA}{data}")
                 
                 if data.get("code") == 0:
-                    print(f"{Fore.GREEN}✓ 成功发送消息给 {Fore.MAGENTA}{receiver_id}")
+                    print(f"{Fore.GREEN}✓ [{self.account_name}] 成功发送消息给 {Fore.MAGENTA}{receiver_id}")
                     return True
                 else:
-                    print(f"{Fore.RED}✗ 发送失败: {Fore.MAGENTA}{data.get('message')} (代码: {data.get('code')})")
-                    # 如果是消息重复发送错误，也标记为成功
+                    print(f"{Fore.RED}✗ [{self.account_name}] 发送失败: {Fore.MAGENTA}{data.get('message')} (代码: {data.get('code')})")
                     if data.get("code") in [-400, 1000]:
                         return True
             else:
-                print(f"{Fore.RED}✗ HTTP错误: {Fore.MAGENTA}{response.status_code}")
+                print(f"{Fore.RED}✗ [{self.account_name}] HTTP错误: {Fore.MAGENTA}{response.status_code}")
                 
         except Exception as e:
-            print(f"{Fore.RED}✗ 发送消息异常: {Fore.MAGENTA}{e}")
+            print(f"{Fore.RED}✗ [{self.account_name}] 发送消息异常: {Fore.MAGENTA}{e}")
         
         return False
 
@@ -285,9 +323,7 @@ class SimpleBilibiliReply:
         import random
         import string
         
-        # 生成随机字符串
         random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
-        # 使用MD5生成哈希
         return hashlib.md5(random_str.encode()).hexdigest()
 
     def process_messages(self):
@@ -302,85 +338,133 @@ class SimpleBilibiliReply:
                     talker_id = session.get("talker_id")
                     last_msg = session.get("last_msg", {})
                     
-                    # 获取消息信息
                     msg_id = last_msg.get("msg_seqno")
                     sender_uid = last_msg.get("sender_uid")
                     timestamp = last_msg.get("timestamp", 0)
+                    receiver_id = last_msg.get("receiver_id")
                     
-                    # 跳过自己发送的消息
                     if sender_uid == int(self.self_uid):
                         continue
                     
-                    # 检查是否已经处理过这条消息
                     if not msg_id or msg_id in self.processed_msg_ids:
                         continue
                     
-                    # 只处理最近的消息
                     current_time = int(time.time())
-                    if current_time - timestamp > 300:  # 5分钟
+                    if current_time - timestamp > 300:
                         continue
                     
-                    # 提取消息内容
                     message_text = self.extract_message_content(last_msg)
                     if not message_text:
                         continue
                     
-                    print(f"{Fore.GREEN}✓ 收到来自 {Fore.MAGENTA}{talker_id} {Fore.GREEN}的消息: {Fore.MAGENTA}{message_text}")
+                    print(f"{Fore.GREEN}✓ [{self.account_name}] 收到来自 {Fore.MAGENTA}{talker_id} {Fore.GREEN}的消息: {Fore.MAGENTA}{message_text}")
                     
-                    # 检查关键词
                     reply = self.check_keywords(message_text)
                     if reply:
-                        # 检查对方是否关注了我
                         if self.is_following_me(talker_id):
                             success = self.send_message(talker_id, reply)
+                            
+                            if self.auto_focus:
+                                focus = self.Auto_focus(receiver_id)
+                                if focus == True:
+                                    print(f"{Fore.GREEN}✓ [{self.account_name}] 关注成功")
+                                else:
+                                    print(f"{Fore.RED}✗ [{self.account_name}] 关注失败，可能已关注对方")
+                            
                             if success:
                                 self.processed_msg_ids.add(msg_id)
-                                print(f"{Fore.GREEN}✓ 已处理消息 {Fore.MAGENTA}{msg_id}")
+                                print(f"{Fore.GREEN}✓ [{self.account_name}] 已处理消息 {Fore.MAGENTA}{msg_id}")
                             else:
-                                print(f"{Fore.RED}✗  发送消息失败")
+                                print(f"{Fore.RED}✗ [{self.account_name}] 发送消息失败")
                         else:
-                            print(f"{Fore.RED}✗ 用户 {talker_id} 未关注您，不发送回复")
-                            # 标记为已处理，避免重复检查
+                            print(f"{Fore.RED}✗ [{self.account_name}] 用户 {talker_id} 未关注您，不发送回复")
                             self.processed_msg_ids.add(msg_id)
                             self.send_message(talker_id, "你还没有点点关注哦~，白嫖可耻！")
                             
                     
                 except Exception as e:
-                    print(f"{Fore.RED}✗ 处理会话异常: {Fore.MAGENTA}{e}")
+                    print(f"{Fore.RED}✗ [{self.account_name}] 处理会话异常: {Fore.MAGENTA}{e}")
                     continue
                     
         except Exception as e:
-            print(f"{Fore.RED}✗ 处理消息主循环异常: {Fore.MAGENTA}{e}")
+            print(f"{Fore.RED}✗ [{self.account_name}] 处理消息主循环异常: {Fore.MAGENTA}{e}")
 
     def run(self):
         """运行监听"""
-        print(f"{Fore.GREEN}✓ 按 Ctrl+C 可停止运行\n")
-        print(f"{Fore.GREEN}项目运行日志：")
+        print(f"{Fore.GREEN}✓ [{self.account_name}] 按 Ctrl+C 可停止运行\n")
+        print(f"{Fore.GREEN}[{self.account_name}] 项目运行日志：")
         
+        self.running = True
         try:
-            while True:
+            while self.running:
                 self.process_messages()
                 time.sleep(self.poll_interval)
                 
         except KeyboardInterrupt:
-            print(f"{Fore.GREEN}✓ 用户手动停止程序")
+            print(f"{Fore.GREEN}✓ [{self.account_name}] 用户手动停止程序")
         except Exception as e:
-            print(f"{Fore.RED}✗ 程序运行异常: {Fore.MAGENTA}{e}")
+            print(f"{Fore.RED}✗ [{self.account_name}] 程序运行异常: {Fore.MAGENTA}{e}")
+        finally:
+            self.running = False
+
+# 检查配置
+def inspect_config():
+    print(f"{Fore.BLUE}正在检查配置是否正确...")
+    accounts = config.get_accounts()
+    
+    if not accounts:
+        print(f"{Fore.RED}✗ 未找到任何账号配置")
+        return False
+    
+    enabled_accounts = [acc for acc in accounts if acc.get("enabled", True)]
+    
+    if not enabled_accounts:
+        print(f"{Fore.RED}✗ 没有启用的账号")
+        return False
+    
+    print(f"{Fore.GREEN}✓ 找到 {len(enabled_accounts)} 个启用的账号")
+    
+    for i, account in enumerate(enabled_accounts):
+        account_config = account["config"]
+        print(f"{Fore.BLUE}检查账号 {i+1}: {account.get('name', '未命名')}")
+        
+        if not account_config.get("sessdata"):
+            print(f"{Fore.RED}✗ SESSDATA未配置")
+            return False
+        if not account_config.get("bili_jct"):
+            print(f"{Fore.RED}✗ BILI_JCT未配置")
+            return False
+        if not account_config.get("self_uid"):
+            print(f"{Fore.RED}✗ SELF_UID未配置")
+            return False
+        if not account_config.get("device_id"):
+            print(f"{Fore.RED}✗ DEVICE_ID未配置")
+            return False
+        
+        print(f"{Fore.GREEN}✓ 账号配置正确")
+    
+    print(f"{Fore.GREEN}✓ 检查完成，开始运行\n")
+    time.sleep(0.5)
+    clean_screen()
+    return True
 
 if __name__ == "__main__":
     init.init_manage()
     is_config = inspect_config()
     if is_config:
-        # 创建机器人实例
-        bot = SimpleBilibiliReply(
-            sessdata=SESSDATA,
-            bili_jct=BILI_JCT,
-            self_uid=SELF_UID,
-            device_id=DEVICE_ID,
-            poll_interval=5,
-        )
+        # 创建机器人管理器
+        bot_manager = BotManager()
         
-        # 运行机器人
-        bot.run()
+        try:
+            # 启动所有机器人
+            bot_manager.start_all()
+            
+            # 主线程保持运行
+            while True:
+                time.sleep(1)
+                
+        except KeyboardInterrupt:
+            print(f"{Fore.GREEN}✓ 用户手动停止程序")
+            bot_manager.stop_all()
     else:
         print(f"{Fore.RED}✗ 配置错误")
