@@ -950,7 +950,7 @@ def create_templates():
                     <div class="space-y-2 text-sm">
                         <div class="flex justify-between">
                             <span class="text-gray-600">面板版本</span>
-                            <span class="font-medium">v2.1.0</span>
+                            <span class="font-medium">v2.0.0</span>
                         </div>
                         <div class="flex justify-between">
                             <span class="text-gray-600">运行时间</span>
