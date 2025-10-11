@@ -45,8 +45,7 @@ Bilibili PrivateMessage Bot (后文简称BPMB) 这是一个基于Bilibili私信A
 3. UID
 在个人空间里面可以看到自己的UID
 
-4. Device_id
-`浏览器F12 -> 网络 -> 随便给一个人发送一条私信 -> 看到send_msg这个链接 -> 里面的w_dev_id就是我们需要的`
+4. Device_id 系统自动生成
 
 打开web面板，进行配置
 
