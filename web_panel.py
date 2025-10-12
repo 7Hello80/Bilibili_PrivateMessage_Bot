@@ -17,7 +17,7 @@ import requests
 # 导入现有的配置管理
 import ConfigManage
 
-CURRENT_VERSION = "MS4wLjQ="
+CURRENT_VERSION = "MS4wLjU="
 UPDATE_CHECK_URL = "aHR0cHM6Ly9hcGlzLmJ6a3MucXp6LmlvLz9pZD0x"
 
 init.init_manage()
