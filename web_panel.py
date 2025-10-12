@@ -136,45 +136,6 @@ class LogHandler:
     def get_logs(self, limit=100):
         """获取最新的日志"""
         return self.logs[-limit:] if self.logs else []
-
-    def restart_bot_mod(self):
-        """重启机器人"""
-        global bot_process, is_bot_running
-        
-        try:
-            # 先停止机器人
-            if is_bot_running and bot_process:
-                bot_process.terminate()
-                try:
-                    bot_process.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    bot_process.kill()
-                    bot_process.wait()
-                is_bot_running = False
-            
-            # 等待一下确保进程完全停止
-            time.sleep(2)
-            
-            # 再启动机器人
-            python_path = get_python3_path()
-            if not python_path:
-                log_handler.add_log("未找到python3解释器", "ERROR")
-            
-            bot_process = subprocess.Popen(
-                [python_path, 'index.py'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                universal_newlines=True,
-                bufsize=1
-            )
-            
-            # 启动日志读取线程
-            threading.Thread(target=read_bot_output, daemon=True).start()
-            
-            is_bot_running = True
-        
-        except Exception as e:
-            log_handler.add_log(f"机器人重启失败: {str(e)}", "ERROR")
     
     def clear_logs(self):
         """清除所有日志"""
@@ -195,6 +156,45 @@ class LogHandler:
 
 # 初始化日志处理器
 log_handler = LogHandler(LOG_FILE)
+
+def restart_bot_mod():
+    """重启机器人"""
+    global bot_process, is_bot_running
+    
+    try:
+        # 先停止机器人
+        if is_bot_running and bot_process:
+            bot_process.terminate()
+            try:
+                bot_process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                bot_process.kill()
+                bot_process.wait()
+            is_bot_running = False
+        
+        # 等待一下确保进程完全停止
+        time.sleep(2)
+        
+        # 再启动机器人
+        python_path = get_python3_path()
+        if not python_path:
+            log_handler.add_log("未找到python3解释器", "ERROR")
+        
+        bot_process = subprocess.Popen(
+            [python_path, 'index.py'],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            universal_newlines=True,
+            bufsize=1
+        )
+        
+        # 启动日志读取线程
+        threading.Thread(target=read_bot_output, daemon=True).start()
+        
+        is_bot_running = True
+    
+    except Exception as e:
+        log_handler.add_log(f"机器人重启失败: {str(e)}", "ERROR")
 
 # 登录装饰器
 def login_required(f):
@@ -275,7 +275,7 @@ def add_account():
         
         bot_config.add_account(new_account)
         log_handler.add_log(f"添加新账号: {new_account['name']}")
-        self.restart_bot_mod()
+        restart_bot_mod()
         return jsonify({'success': True, 'message': '账号添加成功'})
     
     except Exception as e:
@@ -328,7 +328,7 @@ def update_account(account_index):
         
         bot_config.update_account(account_index, updated_account)
         log_handler.add_log(f"更新账号: {updated_account['name']}")
-        self.restart_bot_mod()
+        restart_bot_mod()
         return jsonify({'success': True, 'message': '账号更新成功'})
     
     except Exception as e:
@@ -345,7 +345,7 @@ def delete_account(account_index):
             account_name = accounts[account_index].get("name", f"账号{account_index+1}")
             bot_config.delete_account(account_index)
             log_handler.add_log(f"删除账号: {account_name}")
-            self.restart_bot_mod()
+            restart_bot_mod()
             return jsonify({'success': True, 'message': '账号删除成功'})
         else:
             return jsonify({'success': False, 'message': '账号不存在'})
@@ -367,7 +367,7 @@ def toggle_account(account_index):
             
             status = "启用" if account["enabled"] else "禁用"
             log_handler.add_log(f"{status}账号: {account.get('name', f'账号{account_index+1}')}")
-            self.restart_bot_mod()
+            restart_bot_mod()
             return jsonify({'success': True, 'message': f'账号已{status}', 'enabled': account["enabled"]})
         else:
             return jsonify({'success': False, 'message': '账号不存在'})
@@ -385,7 +385,7 @@ def update_global_keywords():
         bot_config.set_global_keywords(keywords_data)
         
         log_handler.add_log("全局关键词配置已更新")
-        self.restart_bot_mod()
+        restart_bot_mod()
         return jsonify({'success': True, 'message': '全局关键词更新成功'})
     
     except Exception as e:
@@ -404,7 +404,7 @@ def add_account_keyword(account_index):
             return jsonify({'success': False, 'message': '关键词和回复内容不能为空'})
         
         bot_config.add_account_keyword(account_index, keyword, reply)
-        self.restart_bot_mod()
+        restart_bot_mod()
         
         log_handler.add_log(f"为账号 {account_index} 添加关键词: {keyword} -> {reply}")
         return jsonify({'success': True, 'message': '关键词添加成功'})
@@ -424,7 +424,7 @@ def delete_account_keyword(account_index):
             return jsonify({'success': False, 'message': '关键词不能为空'})
         
         bot_config.delete_account_keyword(account_index, keyword)
-        self.restart_bot_mod()
+        restart_bot_mod()
         
         log_handler.add_log(f"从账号 {account_index} 删除关键词: {keyword}")
         return jsonify({'success': True, 'message': '关键词删除成功'})
