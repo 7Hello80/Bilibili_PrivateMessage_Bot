@@ -12,9 +12,13 @@ import psutil
 import init
 import sys
 import uuid
+import requests
 
 # 导入现有的配置管理
 import ConfigManage
+
+CURRENT_VERSION = "MS4wLjQ="
+UPDATE_CHECK_URL = "aHR0cHM6Ly9hcGlzLmJ6a3MucXp6LmlvLz9pZD0x"
 
 init.init_manage()
 
@@ -59,6 +63,25 @@ class PanelConfigManager:
             self.config = default_config
             self.save_config()
             return default_config
+    
+    def check_for_updates(self):
+        """检查更新"""
+        try:
+            response = requests.get(ConfigManage.base64_decode(UPDATE_CHECK_URL), timeout=10)
+            if response.status_code == 200:
+                update_info = response.json()
+                return {
+                    'has_update': update_info.get('version') != ConfigManage.base64_decode(CURRENT_VERSION),
+                    'update_info': update_info,
+                    'current_version': ConfigManage.base64_decode(CURRENT_VERSION)
+                }
+        except Exception as e:
+            logging.error(f"检查更新失败: {str(e)}")
+        return {
+            'has_update': False,
+            'update_info': None,
+            'current_version': ConfigManage.base64_decode(CURRENT_VERSION)
+        }
     
     def save_config(self):
         """保存面板配置"""
@@ -219,6 +242,25 @@ def add_account():
     except Exception as e:
         log_handler.add_log(f"添加账号失败: {str(e)}", "ERROR")
         return jsonify({'success': False, 'message': f'添加失败: {str(e)}'})
+
+@app.route('/api/check_update')
+@login_required
+def check_update():
+    """检查更新"""
+    try:
+        update_info = panel_config.check_for_updates()
+        return jsonify({
+            'success': True,
+            'has_update': update_info['has_update'],
+            'update_info': update_info['update_info'],
+            'current_version': update_info['current_version']
+        })
+    except Exception as e:
+        log_handler.add_log(f"检查更新失败: {str(e)}", "ERROR")
+        return jsonify({
+            'success': False, 
+            'message': f'检查更新失败: {str(e)}'
+        })
 
 @app.route('/api/update_account/<int:account_index>', methods=['POST'])
 @login_required
@@ -406,6 +448,19 @@ def get_bot_status():
         'total_accounts_count': len(accounts),
         'global_keywords': bot_config.get_global_keywords()
     })
+
+@app.route('/api/get_announcement', methods=['POST', 'GET'])
+@login_required
+def get_announcement():
+    """获取远程公告"""
+    try:
+        response = requests.get('https://apis.bzks.qzz.io/?id=2')
+        response.raise_for_status()
+        data = response.text
+        return jsonify({'success': True, 'message': data})
+    except requests.RequestException as e:
+        log_handler.add_log(f"获取公告失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'获取公告失败: {str(e)}'})
 
 @app.route('/api/start_bot', methods=['POST'])
 @login_required
@@ -904,6 +959,39 @@ def create_templates():
                 </div>
             </div>
 
+            <!-- 更新提示 -->
+            <div id="update-alert" class="hidden bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0">
+                        <i class="fa fa-sync-alt text-blue-400 text-xl"></i>
+                    </div>
+                    <div class="ml-3 flex-1">
+                        <h3 class="text-sm font-medium text-blue-800">
+                            发现新版本！
+                        </h3>
+                        <div class="mt-1 text-sm text-blue-700">
+                            <p>当前版本: <span id="current-version" class="font-semibold">v1.0.0</span> → 
+                            最新版本: <span id="latest-version" class="font-semibold">v1.0.0</span></p>
+                            <p class="mt-1" id="update-announcement">更新内容加载中...</p>
+                        </div>
+                        <div class="mt-2 flex space-x-2">
+                            <a id="update-link" target="_blank" 
+                            class="inline-flex items-center px-3 py-1 border border-transparent text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition">
+                                <i class="fa fa-external-link-alt mr-1"></i>前往更新
+                            </a>
+                            <button onclick="hideUpdateAlert()" 
+                                    class="inline-flex items-center px-3 py-1 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition">
+                                <i class="fa fa-times mr-1"></i>忽略
+                            </button>
+                        </div>
+                    </div>
+                    <button type="button" onclick="hideUpdateAlert()" class="ml-auto -mx-1.5 -my-1.5 bg-blue-50 text-blue-500 rounded-lg focus:ring-2 focus:ring-blue-400 p-1.5 hover:bg-blue-200 inline-flex h-8 w-8">
+                        <span class="sr-only">关闭</span>
+                        <i class="fa fa-times"></i>
+                    </button>
+                </div>
+            </div>
+
             <!-- 控制按钮 -->
             <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
                 <h3 class="text-lg font-medium text-gray-800 mb-4">机器人控制</h3>
@@ -920,7 +1008,18 @@ def create_templates():
                             class="flex items-center justify-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed transition transform hover:-translate-y-0.5">
                         <i class="fa fa-redo mr-2"></i>重启机器人
                     </button>
+                    <button onclick="manualCheckUpdate()" 
+                            class="flex items-center justify-center px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700 focus:outline-none focus:ring-2 focus:ring-purple-500 transition transform hover:-translate-y-0.5">
+                        <i class="fa fa-sync-alt mr-2"></i>检查更新
+                    </button>
                 </div>
+            </div>
+
+            <!-- 公告展示栏 -->
+            <div class="bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6">
+                <h3 class="text-lg font-medium text-blue-800 mb-4">系统公告</h3>
+                <p id="announcement-text" class="text-sm text-blue-700">
+                </p>
             </div>
 
             <!-- 快速操作 -->
@@ -1547,7 +1646,7 @@ function renderLogs() {
         }
         
         return `
-            <div class="log-entry ${logClass} flex items-start space-x-3 py-2 px-3 border-l-4 ${getBorderColor(logClass)} hover:bg-gray-800 transition cursor-pointer" onclick="copyLogContent('${log.replace(/'/g, "\\'")}')">
+            <div class="log-entry ${logClass} flex items-start space-x-3 py-2 px-3 border-l-4 ${getBorderColor(logClass)} hover:bg-gray-800 transition cursor-pointer" onclick="copyLogContent('${log.replace(/'/g, "\'")}')">
                 <i class="${icon} mt-1 flex-shrink-0"></i>
                 <div class="flex-1">
                     <div class="flex items-center flex-wrap">
@@ -1835,6 +1934,24 @@ function updateGlobalKeywordsList(keywords) {
     `).join('');
 }
 
+function get_announcement() {
+    fetch('/api/get_announcement')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('announcement-text').innerHTML = data.message;
+            } else {
+                showNotification('获取公告失败', 'error');
+                document.getElementById('announcement-text').innerHTML = '获取公告失败';
+            }
+        })
+        .catch(error => {
+            console.error('获取公告失败:', error);
+            showNotification('操作失败，请检查网络连接', 'error');
+            document.getElementById('announcement-text').innerHTML = '获取公告失败';
+        });
+}
+
 function toggleAccount(index) {
     fetch(`/api/toggle_account/${index}`, { method: 'POST' })
         .then(response => response.json())
@@ -2072,6 +2189,68 @@ function showAddGlobalKeywordModal() {
                 });
         }
     }
+}
+
+// 检查更新
+function checkForUpdates() {
+    fetch('/api/check_update')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.has_update && data.update_info) {
+                showUpdateAlert(data.update_info, data.current_version);
+            }
+        })
+        .catch(error => {
+            console.error('检查更新失败:', error);
+        });
+}
+
+// 显示更新提示
+function showUpdateAlert(updateInfo, currentVersion) {
+    const alert = document.getElementById('update-alert');
+    const currentVersionEl = document.getElementById('current-version');
+    const latestVersionEl = document.getElementById('latest-version');
+    const announcementEl = document.getElementById('update-announcement');
+    const updateLink = document.getElementById('update-link');
+    
+    if (alert && currentVersionEl && latestVersionEl && announcementEl && updateLink) {
+        currentVersionEl.textContent = `v${currentVersion}`;
+        latestVersionEl.textContent = `v${updateInfo.version}`;
+        announcementEl.innerHTML = updateInfo.announ || '有新功能和改进，请及时更新！';
+        updateLink.href = updateInfo.url;
+        
+        alert.classList.remove('hidden');
+    }
+}
+
+// 隐藏更新提示
+function hideUpdateAlert() {
+    const alert = document.getElementById('update-alert');
+    if (alert) {
+        alert.classList.add('hidden');
+    }
+}
+
+// 手动检查更新
+function manualCheckUpdate() {
+    fetch('/api/check_update')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                if (data.has_update && data.update_info) {
+                    showUpdateAlert(data.update_info, data.current_version);
+                    showNotification(`发现新版本 v${data.update_info.version}`, 'success');
+                } else {
+                    showNotification('当前已是最新版本', 'info');
+                }
+            } else {
+                showNotification(data.message || '检查更新失败', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('检查更新失败:', error);
+            showNotification('检查更新失败，请检查网络连接', 'error');
+        });
 }
 
 // 添加账号表单提交
@@ -2363,6 +2542,9 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // 初始化运行时间
     updateUptime();
+
+    // 获取公告
+    get_announcement();
     
     // 设置默认激活的导航项
     const defaultNav = document.querySelector('.nav-item.active');
@@ -2375,6 +2557,8 @@ document.addEventListener('DOMContentLoaded', function() {
     usernameElements.forEach(el => {
         el.textContent = '{{ session.username }}';
     });
+
+    setTimeout(checkForUpdates, 2000);
 });
 </script>
 {% endblock %}''')
