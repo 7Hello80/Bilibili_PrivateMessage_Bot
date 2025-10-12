@@ -51,7 +51,7 @@ Bilibili PrivateMessage Bot (后文简称BPMB) 这是一个基于Bilibili私信A
 
 ## 使用方式
 
-环境要求**Python3+**
+环境要求**Python3.7+**
 
 1. 下载源码到本地
 ```bash
