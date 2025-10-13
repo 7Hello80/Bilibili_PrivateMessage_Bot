@@ -26,7 +26,6 @@ else:
         line_buffering=sys.stdout.line_buffering
     )
 
-init.init_manage()
 config = ConfigManage.ConfigManager("config.json")
 
 # 初始化colorama
