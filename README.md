@@ -38,6 +38,8 @@ Bilibili PrivateMessage Bot (后文简称BPMB) 这是一个基于Bilibili私信A
 
 ## 参数配置
 
+一、手动填写
+
 1. SESSDATA
 `浏览器按下F12 -> 应用/application -> cookie -> https://message.bilibili.com -> SESSDATA`
 
@@ -48,6 +50,10 @@ Bilibili PrivateMessage Bot (后文简称BPMB) 这是一个基于Bilibili私信A
 在个人空间里面可以看到自己的UID
 
 4. Device_id 系统自动生成
+
+二、扫码登陆
+
+最新V1.0.6版本支持，敬请期待
 
 打开web面板，进行配置
 
