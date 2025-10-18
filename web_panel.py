@@ -27,7 +27,7 @@ UPDATE_CHECK_URL = "aHR0cDovLzExNC4xMzQuMTg4LjE4OD9pZD0x"
 Version = "2.0.1"
 system_name = platform.system()
 system_version = platform.version()
-disk_default = "/"
+disk_default = "/mnt"
 
 if system_name == "Linux":
     #获取linux发行版名称
@@ -3045,6 +3045,8 @@ function manualCheckUpdate() {
                     } else {
                         showNotification('当前已是最新版本', 'info');
                     }
+                } else {
+                    showNotification('当前已是最新版本', 'info');
                 }
             } else {
                 showNotification(data.message || '检查更新失败', 'error');
