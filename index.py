@@ -28,6 +28,8 @@ else:
 
 config = ConfigManage.ConfigManager("config.json")
 
+version = "1.0.6"
+
 # 初始化colorama
 colorama.init(autoreset=True)
 
@@ -446,7 +448,7 @@ def inspect_config():
     time.sleep(0.5)
     clean_screen()
     print(f"{Fore.GREEN}程序名称: {Fore.WHITE}哔哩哔哩私信机器人")
-    print(f"{Fore.GREEN}版本号: {Fore.WHITE}v1.0.4")
+    print(f"{Fore.GREEN}版本号: {Fore.WHITE}v{version}")
     print(f"{Fore.GREEN}作者: {Fore.WHITE}淡意往事")
     print(f"{Fore.GREEN}哔哩哔哩主页: {Fore.WHITE}https://b23.tv/tq8hoKu")
     print(f"{Fore.GREEN}Github: {Fore.WHITE}https://github.com/7hello80")

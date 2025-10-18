@@ -3,22 +3,37 @@ import os
 import logging
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 from werkzeug.security import generate_password_hash, check_password_hash
 import subprocess
-import signal
 import psutil
 import init
 import sys
 import uuid
 import requests
+import qrcode
+import base64
+from io import BytesIO
+import platform
+from colorama import Fore, Back, Style
+import distro
 
 # 导入现有的配置管理
 import ConfigManage
 
-CURRENT_VERSION = "MS4wLjU="
-UPDATE_CHECK_URL = "aHR0cHM6Ly9hcGlzLmJ6a3MucXp6LmlvLz9pZD0x"
+CURRENT_VERSION = "MS4wLjY="
+UPDATE_CHECK_URL = "aHR0cDovLzExNC4xMzQuMTg4LjE4OD9pZD0x"
+Version = "2.0.1"
+system_name = platform.system()
+system_version = platform.version()
+disk_default = "/mnt"
+
+if system_name == "Linux":
+    #获取linux发行版名称
+    system_distribution = distro.name()
+else:
+    system_distribution = system_name + " " + platform.release()
 
 init.init_manage()
 
@@ -195,6 +210,23 @@ def restart_bot_mod():
     
     except Exception as e:
         log_handler.add_log(f"机器人重启失败: {str(e)}", "ERROR")
+
+def generate_qr_base64(url):
+    """生成二维码并返回Base64字符串"""
+    qr = qrcode.QRCode(
+        version=1,
+        error_correction=qrcode.constants.ERROR_CORRECT_L,
+        box_size=10,
+        border=4,
+    )
+    qr.add_data(url)
+    qr.make(fit=True)
+    
+    img = qr.make_image(fill_color="black", back_color="white")
+    
+    buffered = BytesIO()
+    img.save(buffered, format="PNG")
+    return "data:image/png;base64," + base64.b64encode(buffered.getvalue()).decode()
 
 # 登录装饰器
 def login_required(f):
@@ -440,6 +472,121 @@ def index():
     """主控制面板"""
     return render_template('index.html')
 
+# 哔哩哔哩扫码登录接口 - 申请登录二维码
+@app.route('/api/bilibili_qrcode', methods=['GET'])
+@login_required
+def qrcode_login():
+    url = "https://passport.bilibili.com/x/passport-login/web/qrcode/generate"
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": "https://message.bilibili.com",
+        "Referer": "https://message.bilibili.com/",
+    }
+    try:
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        qrcode_data = response.json()
+        
+        if qrcode_data.get('code') != 0:
+            log_handler.add_log(f"申请登录二维码失败: {qrcode_data.get('message')}", "ERROR")
+            return jsonify({'success': False, 'message': f'申请登录二维码失败: {qrcode_data.get("message")}'})
+        
+        log_handler.add_log(f"申请登录二维码成功")
+        return jsonify({'success': True, "data": {
+            "qrcode_img": generate_qr_base64(qrcode_data.get("data", {})["url"]),
+            "qrcode_key": qrcode_data.get("data", {})["qrcode_key"]
+        }})
+    except requests.RequestException as e:
+        log_handler.add_log(f"申请登录二维码失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'申请登录二维码失败: {str(e)}'})
+
+# 哔哩哔哩扫码登录接口 - 检查二维码登录状态
+@app.route('/api/bilibili_qrcode_status', methods=['GET'])
+@login_required
+def qrcode_status():
+    qrcode_key = request.args.get('qrcode_key')
+    if not qrcode_key:
+        return jsonify({'success': False, 'message': 'qrcode_key不能为空'})
+    
+    url = "https://passport.bilibili.com/x/passport-login/web/qrcode/poll"
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+        "Accept-Language": "zh-CN,zh;q=0.9",
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Origin": "https://message.bilibili.com",
+        "Referer": "https://message.bilibili.com/",
+    }
+    
+    params = {
+        "qrcode_key": qrcode_key
+    }
+    
+    try:
+        # 使用 Session 保持会话
+        session = requests.Session()
+        response = session.get(url, params=params, headers=headers, timeout=10)
+        response.raise_for_status()
+        status_data = response.json()
+        
+        data = status_data.get("data", {})
+        status_code = data.get("code")
+        
+        if status_code == 0:
+            # 登录成功，从响应的 cookies 中获取
+            cookies_dict = session.cookies.get_dict()
+            sessdata = cookies_dict.get('SESSDATA')
+            bili_jct = cookies_dict.get('bili_jct')
+            
+            if not sessdata or not bili_jct:
+                log_handler.add_log(f"登录成功但未获取到Cookie", "ERROR")
+                return jsonify({'success': False, 'message': '登录成功但未获取到Cookie'})
+            
+            # 验证登录状态并获取用户信息
+            user_api = "https://api.bilibili.com/x/web-interface/nav"
+            user_headers = headers.copy()
+            user_headers["Cookie"] = f"SESSDATA={sessdata}; bili_jct={bili_jct}"
+            
+            user_response = requests.get(user_api, headers=user_headers, timeout=10)
+            user_response.raise_for_status()
+            user_data = user_response.json()
+            
+            if user_data.get("code") != 0:
+                log_handler.add_log(f"获取用户信息失败: {user_data.get('message')}", "ERROR")
+                return jsonify({'success': False, 'message': f'获取用户信息失败: {user_data.get("message")}'})
+            
+            mid = user_data.get("data", {}).get("mid")
+            uname = user_data.get("data", {}).get("uname", "")
+            
+            log_handler.add_log(f"账号登录成功: {uname}({mid})")
+            return jsonify({
+                'success': True, 
+                'message': '登录成功',
+                "data": {
+                    "sessdata": sessdata,
+                    "bili_jct": bili_jct,
+                    "mid": mid,
+                    "uname": uname
+                }
+            })
+        elif status_code == 86101:
+            return jsonify({'success': False, 'message': '二维码未扫描', 'code': 86101})
+        elif status_code == 86038:
+            return jsonify({'success': False, 'message': '二维码已过期', 'code': 86038})
+        elif status_code == 86090:
+            return jsonify({'success': False, 'message': '二维码已扫描未确认', 'code': 86090})
+        else:
+            message = data.get("message", "未知状态")
+            return jsonify({'success': False, 'message': f'状态异常: {message}', 'code': status_code})
+            
+    except requests.RequestException as e:
+        log_handler.add_log(f"检查登录状态失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'检查登录状态失败: {str(e)}'})
+
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     """登录页面"""
@@ -497,7 +644,7 @@ def get_bot_status():
 def get_announcement():
     """获取远程公告"""
     try:
-        response = requests.get('https://apis.bzks.qzz.io/?id=2')
+        response = requests.get(ConfigManage.base64_decode("aHR0cDovLzExNC4xMzQuMTg4LjE4OD9pZD0y"))
         response.raise_for_status()
         data = response.text
         return jsonify({'success': True, 'message': data})
@@ -568,6 +715,76 @@ def stop_bot():
     except Exception as e:
         log_handler.add_log(f"机器人停止失败: {str(e)}", "ERROR")
         return jsonify({'success': False, 'message': f'停止失败: {str(e)}'})
+
+# 添加系统监控数据获取函数
+def get_system_stats():
+    """获取系统状态信息"""
+    # CPU信息
+    cpu_count = psutil.cpu_count(logical=False)  # 物理核心
+    cpu_count_logical = psutil.cpu_count(logical=True)  # 逻辑核心
+    cpu_percent = psutil.cpu_percent(interval=0.1)  # CPU使用率
+    
+    # 内存信息
+    mem = psutil.virtual_memory()
+    mem_total = mem.total / (1024 **3)  # 总内存(GB)
+    mem_used = mem.used / (1024** 3)    # 已用内存(GB)
+    mem_percent = mem.percent           # 内存使用率
+    
+    # 磁盘信息
+    disk = psutil.disk_usage(disk_default)
+    disk_total = disk.total / (1024 **3)  # 总磁盘空间(GB)
+    disk_used = disk.used / (1024** 3)    # 已用磁盘空间(GB)
+    disk_percent = disk.percent           # 磁盘使用率
+    
+    # 系统负载
+    load_avg = None
+    if platform.system() != 'Windows':
+        try:
+            load = psutil.getloadavg()
+            load_avg = [round(x, 2) for x in load]
+        except AttributeError:
+            pass
+    
+    # 系统信息
+    system_info = {
+        'os': platform.system(),
+        'release': platform.release(),
+        'version': platform.version(),
+        'processor': platform.processor()
+    }
+    
+    return {
+        'cpu': {
+            'physical_cores': cpu_count,
+            'logical_cores': cpu_count_logical,
+            'usage': cpu_percent
+        },
+        'memory': {
+            'total': round(mem_total, 2),
+            'used': round(mem_used, 2),
+            'usage': mem_percent
+        },
+        'disk': {
+            'total': round(disk_total, 2),
+            'used': round(disk_used, 2),
+            'usage': disk_percent
+        },
+        'load_avg': load_avg,
+        'system': system_info,
+        'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    }
+
+# 添加系统监控API路由
+@app.route('/api/system_stats')
+@login_required
+def system_stats():
+    """获取系统状态数据"""
+    try:
+        stats = get_system_stats()
+        return jsonify({'success': True, 'data': stats})
+    except Exception as e:
+        log_handler.add_log(f"获取系统状态失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'获取失败: {str(e)}'})
 
 @app.route('/api/restart_bot', methods=['POST'])
 @login_required
@@ -722,6 +939,10 @@ def create_templates():
         .gradient-bg {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         }
+
+        html, body {
+            height: 100%;
+        }
         
         .card-hover {
             transition: all 0.3s ease;
@@ -807,6 +1028,12 @@ def create_templates():
         input:checked + .slider:before {
             transform: translateX(26px);
         }
+        /* 添加到现有样式中 */
+        .circle-progress {
+            transition: stroke-dashoffset 0.8s ease-in-out;
+            transform-origin: center;
+        }
+        
     </style>
 </head>
 <body class="bg-gray-50 font-sans">
@@ -900,7 +1127,7 @@ def create_templates():
                     <i class="fa fa-robot text-white"></i>
                 </div>
                 <div>
-                    <h1 class="text-lg font-bold text-gray-800">B站机器人</h1>
+                    <h1 class="text-lg font-bold text-gray-800">B站私信机器人</h1>
                     <p class="text-xs text-gray-500">控制面板</p>
                 </div>
             </div>
@@ -923,6 +1150,14 @@ def create_templates():
             <a href="#admin" onclick="showSection('admin')" class="nav-item flex items-center space-x-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-lg transition">
                 <i class="fa fa-user-shield text-gray-400 w-5"></i>
                 <span>账号设置</span>
+            </a>
+            <a href="#about" onclick="showSection('about')" class="nav-item flex items-center space-x-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-lg transition">
+                <i class="fa fa-user text-gray-400 w-5"></i>
+                <span>关于我们</span>
+            </a>
+            <a href="https://github.com/7Hello80/Bilibili_PrivateMessage_Bot" target="_blank" class="nav-item flex items-center space-x-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-lg transition">
+                <i class="fab fa-github text-gray-800 w-5"></i>
+                <span>GitHub仓库</span>
             </a>
             <a href="/logout" class="nav-item flex items-center space-x-3 px-4 py-3 text-red-600 hover:bg-red-50 rounded-lg transition mt-4">
                 <i class="fa fa-sign-out-alt w-5"></i>
@@ -1001,6 +1236,84 @@ def create_templates():
                     </div>
                 </div>
             </div>
+
+                            <!-- 系统监控卡片 -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
+                    <h3 class="text-lg font-medium text-gray-800 mb-4">系统资源监控</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                        <!-- CPU使用率 -->
+                        <div class="flex flex-col items-center">
+                            <div class="relative w-36 h-36 mb-2">
+                                <!-- 圆形进度条背景 -->
+                                <svg class="w-full h-full" viewBox="0 0 100 100">
+                                    <circle cx="50" cy="50" r="45" fill="none" stroke="#f3f4f6" stroke-width="10"/>
+                                    <!-- 进度条将通过JS更新 -->
+                                    <circle id="cpu-progress" cx="50" cy="50" r="45" fill="none" stroke="#3b82f6" stroke-width="10" 
+                                            stroke-dasharray="283" stroke-dashoffset="283" transform="rotate(-90 50 50)"/>
+                                </svg>
+                                <!-- 百分比文本 -->
+                                <div class="absolute inset-0 flex flex-col items-center justify-center">
+                                    <span id="cpu-usage" class="text-2xl font-bold text-gray-800">0%</span>
+                                    <span class="text-xs text-gray-500">CPU</span>
+                                </div>
+                            </div>
+                            <p class="text-xs text-gray-500">
+                                核心: <span id="cpu-cores">0</span>
+                            </p>
+                        </div>
+
+                        <!-- 内存使用率 -->
+                        <div class="flex flex-col items-center">
+                            <div class="relative w-36 h-36 mb-2">
+                                <svg class="w-full h-full" viewBox="0 0 100 100">
+                                    <circle cx="50" cy="50" r="45" fill="none" stroke="#f3f4f6" stroke-width="10"/>
+                                    <circle id="mem-progress" cx="50" cy="50" r="45" fill="none" stroke="#10b981" stroke-width="10" 
+                                            stroke-dasharray="283" stroke-dashoffset="283" transform="rotate(-90 50 50)"/>
+                                </svg>
+                                <div class="absolute inset-0 flex flex-col items-center justify-center">
+                                    <span id="mem-usage" class="text-2xl font-bold text-gray-800">0%</span>
+                                    <span class="text-xs text-gray-500">内存</span>
+                                </div>
+                            </div>
+                            <p id="mem-details" class="text-xs text-gray-500">0/0 GB</p>
+                        </div>
+
+                        <!-- 磁盘使用率 -->
+                        <div class="flex flex-col items-center">
+                            <div class="relative w-36 h-36 mb-2">
+                                <svg class="w-full h-full" viewBox="0 0 100 100">
+                                    <circle cx="50" cy="50" r="45" fill="none" stroke="#f3f4f6" stroke-width="10"/>
+                                    <circle id="disk-progress" cx="50" cy="50" r="45" fill="none" stroke="#8b5cf6" stroke-width="10" 
+                                            stroke-dasharray="283" stroke-dashoffset="283" transform="rotate(-90 50 50)"/>
+                                </svg>
+                                <div class="absolute inset-0 flex flex-col items-center justify-center">
+                                    <span id="disk-usage" class="text-2xl font-bold text-gray-800">0%</span>
+                                    <span class="text-xs text-gray-500">磁盘</span>
+                                </div>
+                            </div>
+                            <p id="disk-details" class="text-xs text-gray-500">0/0 GB</p>
+                        </div>
+                    </div>
+                    
+                    <!-- 系统负载 (仅Unix系统) -->
+                    <div id="load-average-container" class="mt-6 pt-4 border-t border-gray-100" style="display: none;">
+                        <h4 class="text-sm font-medium text-gray-700 mb-3">系统负载平均值</h4>
+                        <div class="grid grid-cols-3 gap-3">
+                            <div class="p-3 bg-gray-50 rounded-lg text-center">
+                                <p class="text-xs text-gray-500">1分钟</p>
+                                <p id="load-1" class="text-lg font-bold text-gray-800">0.00</p>
+                            </div>
+                            <div class="p-3 bg-gray-50 rounded-lg text-center">
+                                <p class="text-xs text-gray-500">5分钟</p>
+                                <p id="load-5" class="text-lg font-bold text-gray-800">0.00</p>
+                            </div>
+                            <div class="p-3 bg-gray-50 rounded-lg text-center">
+                                <p class="text-xs text-gray-500">15分钟</p>
+                                <p id="load-15" class="text-lg font-bold text-gray-800">0.00</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
 
             <!-- 更新提示 -->
             <div id="update-alert" class="hidden bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6">
@@ -1084,6 +1397,13 @@ def create_templates():
                             </div>
                             <i class="fa fa-chevron-right text-gray-400"></i>
                         </button>
+                        <button onclick="showSection('about')" class="w-full flex items-center justify-between p-3 text-left bg-gray-50 hover:bg-gray-100 rounded-lg transition">
+                            <div class="flex items-center space-x-3">
+                                <i class="fa fa-user text-gray-400"></i>
+                                <span>关于我们</span>
+                            </div>
+                            <i class="fa fa-chevron-right text-gray-400"></i>
+                        </button>
                     </div>
                 </div>
 
@@ -1091,8 +1411,20 @@ def create_templates():
                     <h3 class="text-lg font-medium text-gray-800 mb-4">系统信息</h3>
                     <div class="space-y-2 text-sm">
                         <div class="flex justify-between">
+                            <span class="text-gray-600">系统类型</span>
+                            <span class="font-medium">''' + system_name + '''</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">系统版本</span>
+                            <span class="font-medium">''' + system_version + '''</span>
+                        </div>
+                        <div class="flex justify-between">
+                            <span class="text-gray-600">系统发行版</span>
+                            <span class="font-medium">''' + system_distribution + '''</span>
+                        </div>
+                        <div class="flex justify-between">
                             <span class="text-gray-600">面板版本</span>
-                            <span class="font-medium">v2.0.0</span>
+                            <span class="font-medium">v''' + Version + '''</span>
                         </div>
                         <div class="flex justify-between">
                             <span class="text-gray-600">运行时间</span>
@@ -1154,7 +1486,7 @@ def create_templates():
                         </div>
                     </div>
                     <div class="mt-4">
-                        <button onclick="showAddGlobalKeywordModal()" 
+                        <button onclick="showGlobalKeywordModal()" 
                                 class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition flex items-center">
                             <i class="fa fa-plus mr-2"></i>添加全局关键词
                         </button>
@@ -1309,6 +1641,201 @@ def create_templates():
                 </form>
             </div>
         </div>
+
+        <!-- 关于我们页面 -->
+        <div id="about" class="section p-4 lg:p-6" style="display: none;">
+            <div class="mb-6">
+                <div class="flex items-center">
+                    <!-- 移动端菜单按钮 -->
+                    <button class="mobile-menu-button lg:hidden mr-3 p-2 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 transition">
+                        <i class="fa fa-bars"></i>
+                    </button>
+                    <div>
+                        <h2 class="text-2xl lg:text-3xl font-bold text-gray-800">关于我们</h2>
+                        <p class="text-gray-600 mt-2">项目开发团队介绍</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="max-w-4xl mx-auto">
+                <!-- 开发者信息卡片 -->
+                <div class="bg-white rounded-xl shadow-lg overflow-hidden mb-8">
+                    <div class="p-6 md:p-8">
+                        <div class="flex flex-col md:flex-row items-center gap-6">
+                            <div class="w-32 h-32 rounded-full bg-gradient-to-r from-blue-500 to-purple-600 flex items-center justify-center text-white text-4xl font-bold shadow-lg">
+                                <img src="https://avatars.githubusercontent.com/u/221005642?v=4" alt="开发者头像" class="w-full h-full rounded-full">
+                            </div>
+                            <div class="flex-1 text-center md:text-left">
+                                <h1 class="text-3xl font-bold text-gray-800 mb-2">淡意往事</h1>
+                                <p class="text-lg text-gray-600 mb-4">全栈开发工程师</p>
+                                <p class="text-gray-500 leading-relaxed">一名热爱技术的全栈开发者。本人目前还是在校生，没啥资金，希望可以打赏一下我们</p>
+                                <div class="flex justify-center md:justify-start space-x-4 mt-4">
+                                    <a href="https://github.com/7hello80" class="text-gray-500 hover:text-blue-500 transition-colors duration-200" target="_blank">
+                                        <i class="fab fa-github text-xl"></i>
+                                    </a>
+                                    <a href="mailto:3399711161@qq.com" class="text-gray-500 hover:text-blue-500 transition-colors duration-200" target="_blank">
+                                        <i class="fa fa-envelope text-xl"></i>
+                                    </a>
+                                    <a href="https://qm.qq.com/q/swTIhx4tF" class="text-gray-500 hover:text-blue-500 transition-colors duration-200" target="_blank">
+                                        <i class="fab fa-qq text-xl"></i>
+                                    </a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <div class="lg:col-span-2 space-y-8">
+                        <!-- 前端技术栈 -->
+                        <div class="bg-white rounded-xl shadow-lg p-6">
+                            <h2 class="text-xl font-bold text-gray-800 mb-4 flex items-center">
+                                <i class="fa fa-code mr-2 text-blue-500"></i> 前端技术栈
+                            </h2>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div class="flex items-center p-3 rounded-lg border border-gray-100 hover:border-blue-200 hover:bg-blue-50 transition-all duration-200">
+                                    <div class="w-10 h-10 rounded-lg bg-gradient-to-r from-blue-100 to-blue-200 flex items-center justify-center mr-3">
+                                        <i class="fa fa-code text-blue-600"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="font-semibold text-gray-800">HTML/CSS/JavaScript</h3>
+                                        <p class="text-sm text-gray-500">前端基础技术</p>
+                                    </div>
+                                </div>
+                                <div class="flex items-center p-3 rounded-lg border border-gray-100 hover:border-blue-200 hover:bg-blue-50 transition-all duration-200">
+                                    <div class="w-10 h-10 rounded-lg bg-gradient-to-r from-blue-100 to-blue-200 flex items-center justify-center mr-3">
+                                        <i class="fab fa-css3 text-blue-600"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="font-semibold text-gray-800">Tailwind CSS</h3>
+                                        <p class="text-sm text-gray-500">实用优先的CSS框架</p>
+                                    </div>
+                                </div>
+                                <div class="flex items-center p-3 rounded-lg border border-gray-100 hover:border-blue-200 hover:bg-blue-50 transition-all duration-200">
+                                    <div class="w-10 h-10 rounded-lg bg-gradient-to-r from-blue-100 to-blue-200 flex items-center justify-center mr-3">
+                                        <i class="fa fa-bolt text-blue-600"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="font-semibold text-gray-800">HTMX</h3>
+                                        <p class="text-sm text-gray-500">增强HTML的JavaScript库</p>
+                                    </div>
+                                </div>
+                                <div class="flex items-center p-3 rounded-lg border border-gray-100 hover:border-blue-200 hover:bg-blue-50 transition-all duration-200">
+                                    <div class="w-10 h-10 rounded-lg bg-gradient-to-r from-blue-100 to-blue-200 flex items-center justify-center mr-3">
+                                        <i class="fa fa-font text-blue-600"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="font-semibold text-gray-800">Font Awesome</h3>
+                                        <p class="text-sm text-gray-500">图标字体库</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 后端技术栈 -->
+                        <div class="bg-white rounded-xl shadow-lg p-6">
+                            <h2 class="text-xl font-bold text-gray-800 mb-4 flex items-center">
+                                <i class="fa fa-server mr-2 text-green-500"></i> 后端技术栈
+                            </h2>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div class="flex items-center p-3 rounded-lg border border-gray-100 hover:border-green-200 hover:bg-green-50 transition-all duration-200">
+                                    <div class="w-10 h-10 rounded-lg bg-gradient-to-r from-green-100 to-green-200 flex items-center justify-center mr-3">
+                                        <i class="fa fa-python text-green-600"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="font-semibold text-gray-800">Python</h3>
+                                        <p class="text-sm text-gray-500">编程语言</p>
+                                    </div>
+                                </div>
+                                <div class="flex items-center p-3 rounded-lg border border-gray-100 hover:border-green-200 hover:bg-green-50 transition-all duration-200">
+                                    <div class="w-10 h-10 rounded-lg bg-gradient-to-r from-green-100 to-green-200 flex items-center justify-center mr-3">
+                                        <i class="fa fa-flask text-green-600"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="font-semibold text-gray-800">Flask</h3>
+                                        <p class="text-sm text-gray-500">Python Web框架</p>
+                                    </div>
+                                </div>
+                                <div class="flex items-center p-3 rounded-lg border border-gray-100 hover:border-green-200 hover:bg-green-50 transition-all duration-200">
+                                    <div class="w-10 h-10 rounded-lg bg-gradient-to-r from-green-100 to-green-200 flex items-center justify-center mr-3">
+                                        <i class="fa fa-database text-green-600"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="font-semibold text-gray-800">JSON</h3>
+                                        <p class="text-sm text-gray-500">数据存储格式</p>
+                                    </div>
+                                </div>
+                                <div class="flex items-center p-3 rounded-lg border border-gray-100 hover:border-green-200 hover:bg-green-50 transition-all duration-200">
+                                    <div class="w-10 h-10 rounded-lg bg-gradient-to-r from-green-100 to-green-200 flex items-center justify-center mr-3">
+                                        <i class="fa fa-shield-alt text-green-600"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="font-semibold text-gray-800">Werkzeug</h3>
+                                        <p class="text-sm text-gray-500">密码安全加密</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 支持与打赏 -->
+                    <div class="lg:col-span-1">
+                        <div class="bg-white rounded-xl shadow-lg p-6 sticky top-24">
+                            <h2 class="text-xl font-bold text-gray-800 mb-4 flex items-center">
+                                <i class="fa fa-heart mr-2 text-red-500"></i> 支持与打赏
+                            </h2>
+                            <p class="text-gray-600 mb-6">如果我的项目对您有帮助，欢迎打赏支持，这将激励我持续创作和更新！</p>
+                            <div class="space-y-6">
+                                <div class="text-center p-4 rounded-lg border-2 border-dashed border-gray-200 hover:border-blue-300 transition-colors duration-200">
+                                    <h3 class="font-semibold text-gray-800 mb-2">微信赞赏</h3>
+                                    <div class="w-40 h-40 mx-auto bg-gray-100 rounded-lg flex items-center justify-center mb-2">
+                                        <img src="https://store.bzks.qzz.io/src/png/vx-D_zisWkG.png" alt="微信赞赏二维码" class="w-full h-full rounded-lg">
+                                    </div>
+                                    <p class="text-sm text-gray-500">扫描二维码赞赏</p>
+                                </div>
+                                <div class="text-center p-4 rounded-lg border-2 border-dashed border-gray-200 hover:border-blue-300 transition-colors duration-200">
+                                    <h3 class="font-semibold text-gray-800 mb-2">支付宝</h3>
+                                    <div class="w-40 h-40 mx-auto bg-gray-100 rounded-lg flex items-center justify-center mb-2">
+                                        <img src="https://store.bzks.qzz.io/src/png/alipay-BJaNLw5H.png" alt="支付宝二维码" class="w-full h-full rounded-lg">
+                                    </div>
+                                    <p class="text-sm text-gray-500">扫描二维码打赏</p>
+                                </div>
+                            </div>
+                            <div class="mt-6 p-4 bg-blue-50 rounded-lg">
+                                <p class="text-sm text-blue-700 text-center">感谢您的每一份支持！❤️</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!--如果进行二次开发，此段版权信息不得移除且应明显地标注于页面上-->
+        <footer class="bg-white border-t border-gray-200 py-4 px-6 shadow-inner" style="margin-top: 20px;">
+            <div class="flex flex-col md:flex-row justify-between items-center">
+                <div class="text-center md:text-left mb-2 md:mb-0">
+                    <p class="text-sm text-gray-600">
+                        Copyright &copy; 2025 淡意往事.
+                    </p>
+                    <p class="text-xs text-gray-500 mt-1">
+                        使用 <a href="https://github.com/7Hello80/Bilibili_PrivateMessage_Bot/blob/main/LICENSE" target="_blank" class="text-gray-700 hover:text-gray-600 transition" title="MIT许可协议">MIT许可协议</a> 开放源代码
+                    </p>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <a href="https://github.com/7Hello80/Bilibili_PrivateMessage_Bot" target="_blank" class="text-gray-700 hover:text-gray-600 transition" title="GitHub">
+                        <i class="fab fa-github text-lg"></i>
+                    </a>
+                    <a href="https://space.bilibili.com/2142524663?spm_id_from=333.1007.0.0" target="_blank" class="text-gray-700 hover:text-bilibili transition" title="Bilibili">
+                        <i class="fab fa-bilibili text-lg"></i>
+                    </a>
+                </div>
+            </div>
+            <div class="mt-2 pt-2 border-t border-gray-100 text-center">
+                <p class="text-xs text-gray-500">
+                    系统版本: v''' + ConfigManage.base64_decode(CURRENT_VERSION) + '''
+                </p>
+            </div>
+        </footer>
     </div>
 </div>
 
@@ -1328,6 +1855,30 @@ def create_templates():
                                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
                                    placeholder="例如: 主账号">
                         </div>
+                        
+                        <!-- 扫码登录区域 -->
+                        <div class="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                            <div class="flex items-center justify-between mb-3">
+                                <h4 class="text-lg font-medium text-gray-800">扫码登录</h4>
+                                <button type="button" id="start-qrcode-login" 
+                                        class="px-4 py-2 bg-bilibili text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition flex items-center">
+                                    <i class="fa fa-qrcode mr-2"></i>扫码登录
+                                </button>
+                            </div>
+                            <div id="qrcode-container" class="hidden">
+                                <div class="text-center mb-4">
+                                    <img id="qrcode-img" src="" alt="二维码" class="mx-auto mb-2 border border-gray-300 rounded">
+                                    <p id="qrcode-status" class="text-sm text-gray-600">请使用哔哩哔哩APP扫码登录</p>
+                                </div>
+                                <div class="flex justify-center">
+                                    <button type="button" id="cancel-qrcode-login" 
+                                            class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 transition">
+                                        取消扫码
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-2">SESSDATA</label>
@@ -1498,6 +2049,48 @@ def create_templates():
                         </button>
                     </div>
                 </form>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div id="edit-account-modal-global" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden">
+    <div class="flex items-center justify-center min-h-screen p-4">
+        <div class="bg-white rounded-xl shadow-lg w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+            <div class="p-6 border-b border-gray-200">
+                <h3 class="text-xl font-bold text-gray-800">全局关键词</h3>
+            </div>
+            <div class="bg-gray-50 rounded-lg p-4 mb-4">
+                <h5 class="text-md font-medium text-gray-700 mb-3">添加新全局关键词</h5>
+                <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
+                    <div class="lg:col-span-2">
+                        <input type="text" id="edit-account-keyword-input-global" 
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2focus:ring-primary-500 focus:border-primary-500 transition"
+                            placeholder="关键词">
+                    </div>
+                    <div class="lg:col-span-2">
+                        <input type="text" id="edit-account-reply-input-global"
+                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2focus:ring-primary-500 focus:border-primary-500 transition"
+                            placeholder="回复内容">
+                        </div>
+                        <div class="lg:col-span-1">
+                            <button type="button" onclick="showAddGlobalKeywordModal()"
+                                class="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 focus:outline-nonfocus:ring-2 focus:ring-green-500 transition">
+                                    <i class="fa fa-plus mr-1"></i>添加
+                            </button>
+                        </div>
+                    </div>
+                    <!-- 艾特用户提示 -->
+                    <div class="mt-2 text-sm text-gray-600">
+                        提示：在回复内容中使用 <code class="bg-gray-200 px-1 rounded">[at_user]</code> 来@用户
+                    </div>
+                    <div class="mt-6 flex justify-end space-x-3">
+                        <button type="button" onclick="closeAddGlobalKeywordModal()"
+                            class="px-4 py-2 text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition">
+                            关闭
+                        </button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -1852,11 +2445,21 @@ function showAddAccountModal() {
     const deviceId = generateDeviceId();
     document.querySelector('input[name="device_id"]').value = deviceId;
     
+    // 重置扫码登录区域
+    document.getElementById('qrcode-container').classList.add('hidden');
+    document.getElementById('start-qrcode-login').classList.remove('hidden');
+    
     document.getElementById('add-account-modal').classList.remove('hidden');
 }
 
 function hideAddAccountModal() {
     document.getElementById('add-account-modal').classList.add('hidden');
+    
+    // 停止扫码轮询
+    if (window.qrcodePolling) {
+        clearInterval(window.qrcodePolling);
+        window.qrcodePolling = null;
+    }
 }
 
 function generateDeviceId() {
@@ -1866,6 +2469,120 @@ function generateDeviceId() {
         return v.toString(16);
     }).toUpperCase();
 }
+
+// 扫码登录功能
+function startQrcodeLogin() {
+    const qrcodeContainer = document.getElementById('qrcode-container');
+    const startButton = document.getElementById('start-qrcode-login');
+    
+    // 显示加载状态
+    qrcodeContainer.classList.remove('hidden');
+    startButton.classList.add('hidden');
+    
+    document.getElementById('qrcode-status').textContent = '正在获取二维码...';
+    document.getElementById('qrcode-img').src = '';
+    
+    // 获取二维码
+    fetch('/api/bilibili_qrcode')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                // 显示二维码
+                document.getElementById('qrcode-img').src = data.data.qrcode_img;
+                document.getElementById('qrcode-status').textContent = '请使用哔哩哔哩APP扫码登录';
+                
+                // 开始轮询扫码状态
+                startQrcodePolling(data.data.qrcode_key);
+            } else {
+                document.getElementById('qrcode-status').textContent = '获取二维码失败: ' + data.message;
+                startButton.classList.remove('hidden');
+            }
+        })
+        .catch(error => {
+            console.error('获取二维码失败:', error);
+            document.getElementById('qrcode-status').textContent = '获取二维码失败，请检查网络连接';
+            startButton.classList.remove('hidden');
+        });
+}
+
+function startQrcodePolling(qrcodeKey) {
+    // 停止之前的轮询
+    if (window.qrcodePolling) {
+        clearInterval(window.qrcodePolling);
+    }
+    
+    // 开始新的轮询
+    window.qrcodePolling = setInterval(() => {
+        fetch(`/api/bilibili_qrcode_status?qrcode_key=${encodeURIComponent(qrcodeKey)}`)
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    // 登录成功
+                    clearInterval(window.qrcodePolling);
+                    window.qrcodePolling = null;
+                    
+                    // 自动填充表单
+                    document.querySelector('input[name="sessdata"]').value = data.data.sessdata || '';
+                    document.querySelector('input[name="bili_jct"]').value = data.data.bili_jct || '';
+                    document.querySelector('input[name="self_uid"]').value = data.data.mid || '';
+                    
+                    document.getElementById('qrcode-status').innerHTML = 
+                        `<span class="text-green-600">登录成功！用户信息已自动填充</span>`;
+                    
+                    showNotification('扫码登录成功，用户信息已自动填充', 'success');
+                } else {
+                    // 根据状态码更新提示信息
+                    const statusElement = document.getElementById('qrcode-status');
+                    switch(data.code) {
+                        case 86101:
+                            statusElement.textContent = '等待扫码...';
+                            break;
+                        case 86090:
+                            statusElement.innerHTML = '<span class="text-yellow-600">已扫码，请在手机上确认登录</span>';
+                            break;
+                        case 86038:
+                            statusElement.innerHTML = '<span class="text-red-600">二维码已过期，请重新扫码</span>';
+                            clearInterval(window.qrcodePolling);
+                            window.qrcodePolling = null;
+                            document.getElementById('start-qrcode-login').classList.remove('hidden');
+                            break;
+                        default:
+                            statusElement.textContent = data.message || '未知状态';
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('检查扫码状态失败:', error);
+                document.getElementById('qrcode-status').textContent = '检查状态失败，请重试';
+            });
+    }, 2000); // 每2秒检查一次
+}
+
+function cancelQrcodeLogin() {
+    // 停止轮询
+    if (window.qrcodePolling) {
+        clearInterval(window.qrcodePolling);
+        window.qrcodePolling = null;
+    }
+    
+    // 隐藏二维码容器
+    document.getElementById('qrcode-container').classList.add('hidden');
+    document.getElementById('start-qrcode-login').classList.remove('hidden');
+}
+
+// 为扫码登录按钮添加事件监听
+document.addEventListener('DOMContentLoaded', function() {
+    const startButton = document.getElementById('start-qrcode-login');
+    const cancelButton = document.getElementById('cancel-qrcode-login');
+    
+    if (startButton) {
+        startButton.addEventListener('click', startQrcodeLogin);
+    }
+    
+    if (cancelButton) {
+        cancelButton.addEventListener('click', cancelQrcodeLogin);
+    }
+});
 
 function loadAccounts() {
     fetch('/api/get_accounts')
@@ -2201,10 +2918,18 @@ function deleteGlobalKeyword(keyword) {
     }
 }
 
+function showGlobalKeywordModal() {
+    document.getElementById('edit-account-modal-global').classList.remove('hidden');
+}
+
+function closeAddGlobalKeywordModal() {
+    document.getElementById('edit-account-modal-global').classList.add('hidden');
+}
+
 function showAddGlobalKeywordModal() {
-    const keyword = prompt('请输入关键词:');
+    const keyword = document.getElementById('edit-account-keyword-input-global').value.trim();
     if (keyword) {
-        const reply = prompt('请输入回复内容:');
+        const reply = document.getElementById('edit-account-reply-input-global').value.trim();
         if (reply) {
             fetch('/api/get_accounts')
                 .then(response => response.json())
@@ -2225,13 +2950,34 @@ function showAddGlobalKeywordModal() {
                         loadAccounts();
                         fetchBotStatus(); // 更新状态显示
                     }
+                    document.getElementById('edit-account-keyword-input-global').value = '';
+                    document.getElementById('edit-account-reply-input-global').value = '';
+                    closeAddGlobalKeywordModal();
                 })
                 .catch(error => {
                     console.error('添加全局关键词失败:', error);
                     showNotification('添加失败，请检查网络连接', 'error');
+                    closeAddGlobalKeywordModal();
                 });
         }
     }
+}
+
+function isVersionGreaterOrEqual(currentVersion, targetVersion) {
+    const v1 = currentVersion.split('.').map(Number);
+    const v2 = targetVersion.split('.').map(Number);
+    
+    const maxLength = Math.max(v1.length, v2.length);
+    
+    for (let i = 0; i < maxLength; i++) {
+        const num1 = v1[i] || 0;
+        const num2 = v2[i] || 0;
+        
+        if (num1 > num2) return true;
+        if (num1 < num2) return false;
+    }
+    
+    return true; // 版本相等
 }
 
 // 检查更新
@@ -2240,7 +2986,14 @@ function checkForUpdates() {
         .then(response => response.json())
         .then(data => {
             if (data.success && data.has_update && data.update_info) {
-                showUpdateAlert(data.update_info, data.current_version);
+                const shouldUpdate = !isVersionGreaterOrEqual(
+                    data.current_version || '0.0.0', 
+                    data.update_info.version
+                );
+                
+                if (shouldUpdate) {
+                    showUpdateAlert(data.update_info, data.current_version);
+                }
             }
         })
         .catch(error => {
@@ -2281,10 +3034,17 @@ function manualCheckUpdate() {
         .then(data => {
             if (data.success) {
                 if (data.has_update && data.update_info) {
-                    showUpdateAlert(data.update_info, data.current_version);
-                    showNotification(`发现新版本 v${data.update_info.version}`, 'success');
-                } else {
-                    showNotification('当前已是最新版本', 'info');
+                    const shouldUpdate = !isVersionGreaterOrEqual(
+                        data.current_version || '0.0.0', 
+                        data.update_info.version
+                    );
+                    
+                    if (shouldUpdate) {
+                        showUpdateAlert(data.update_info, data.current_version);
+                        showNotification(`发现新版本 v${data.update_info.version}`, 'success');
+                    } else {
+                        showNotification('当前已是最新版本', 'info');
+                    }
                 }
             } else {
                 showNotification(data.message || '检查更新失败', 'error');
@@ -2430,6 +3190,100 @@ function fetchBotStatus() {
             }
         });
 }
+
+function updateProgressCircle(elementId, targetPercentage) {
+    const circle = document.getElementById(elementId);
+    if (!circle) return;
+    
+    // 获取当前进度（从stroke-dashoffset计算）
+    const circumference = 283;
+    const currentOffset = parseFloat(circle.style.strokeDashoffset || circumference);
+    const currentPercentage = 100 - (currentOffset / circumference * 100);
+    
+    // 动画持续时间（毫秒）
+    const duration = 800;
+    const startTime = performance.now();
+    
+    // 使用requestAnimationFrame实现平滑动画
+    function animate(currentTime) {
+        const elapsedTime = currentTime - startTime;
+        const progress = Math.min(elapsedTime / duration, 1);
+        
+        // 使用缓动函数使动画更自然
+        const easeProgress = progress < 0.5 
+            ? 4 * progress * progress * progress 
+            : 1 - Math.pow(-2 * progress + 2, 3) / 2;
+        
+        // 计算当前应该显示的百分比
+        const currentDisplayPercentage = currentPercentage + (targetPercentage - currentPercentage) * easeProgress;
+        const offset = circumference - (currentDisplayPercentage / 100) * circumference;
+        
+        circle.style.strokeDashoffset = offset;
+        
+        // 更新百分比文本
+        const percentageElement = document.getElementById(elementId.replace('progress', 'usage'));
+        if (percentageElement) {
+            percentageElement.textContent = `${Math.round(currentDisplayPercentage)}%`;
+        }
+        
+        // 根据使用率改变颜色
+        if (currentDisplayPercentage > 80) {
+            circle.setAttribute('stroke', '#ef4444'); // 红色
+        } else if (currentDisplayPercentage > 50) {
+            circle.setAttribute('stroke', '#f59e0b'); // 黄色
+        } else {
+            // 恢复默认颜色
+            if (elementId === 'cpu-progress') circle.setAttribute('stroke', '#3b82f6');
+            if (elementId === 'mem-progress') circle.setAttribute('stroke', '#10b981');
+            if (elementId === 'disk-progress') circle.setAttribute('stroke', '#8b5cf6');
+        }
+        
+        // 继续动画直到完成
+        if (progress < 1) {
+            requestAnimationFrame(animate);
+        }
+    }
+    
+    // 开始动画
+    requestAnimationFrame(animate);
+}
+
+    function updateSystemStats() {
+        fetch('/api/system_stats')
+            .then(response => response.json())
+            .then(data => {
+                if (data.success && data.data) {
+                    const stats = data.data;
+                    
+                    // 更新CPU信息
+                    updateProgressCircle('cpu-progress', stats.cpu.usage);
+                    document.getElementById('cpu-usage').textContent = `${stats.cpu.usage}%`;
+                    document.getElementById('cpu-cores').textContent = 
+                        `${stats.cpu.physical_cores}物理 / ${stats.cpu.logical_cores}逻辑`;
+                    
+                    // 更新内存信息
+                    updateProgressCircle('mem-progress', stats.memory.usage);
+                    document.getElementById('mem-usage').textContent = `${stats.memory.usage}%`;
+                    document.getElementById('mem-details').textContent = 
+                        `${stats.memory.used}/${stats.memory.total} GB`;
+                    
+                    // 更新磁盘信息
+                    updateProgressCircle('disk-progress', stats.disk.usage);
+                    document.getElementById('disk-usage').textContent = `${stats.disk.usage}%`;
+                    document.getElementById('disk-details').textContent = 
+                        `${stats.disk.used}/${stats.disk.total} GB`;
+                    
+                    // 更新系统负载 (仅Unix系统)
+                    if (stats.load_avg) {
+                        document.getElementById('load-average-container').style.display = 'block';
+                        document.getElementById('load-1').textContent = stats.load_avg[0];
+                        document.getElementById('load-5').textContent = stats.load_avg[1];
+                        document.getElementById('load-15').textContent = stats.load_avg[2];
+                    }
+                }
+            })
+            .catch(error => console.error('获取系统状态失败:', error));
+    }
 
 // 启动机器人
 function startBot() {
@@ -2589,10 +3443,15 @@ document.addEventListener('DOMContentLoaded', function() {
     // 获取公告
     get_announcement();
     
-    // 设置默认激活的导航项
-    const defaultNav = document.querySelector('.nav-item.active');
-    if (defaultNav) {
-        defaultNav.click();
+    const hash = window.location.hash.split("#")[1]
+    if (hash) {
+        showSection(hash);
+    } else {
+        // 设置默认激活的导航项
+        const defaultNav = document.querySelector('.nav-item.active');
+        if (defaultNav) {
+            defaultNav.click();
+        }
     }
     
     // 添加用户名显示类
@@ -2602,6 +3461,9 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     setTimeout(checkForUpdates, 2000);
+
+    updateSystemStats();
+    setInterval(updateSystemStats, 2000);
 });
 </script>
 {% endblock %}''')
@@ -2611,11 +3473,10 @@ if __name__ == '__main__':
     create_templates()
     
     # 启动Flask应用
-    print("正在启动B站私信机器人控制面板...")
-    print("访问地址: http://127.0.0.1:5000")
-    print("默认账号: admin")
-    print("默认密码: admin123")
-    print("请及时修改默认密码！")
+    print(f"{Fore.GREEN}访问地址: http://127.0.0.1:5000")
+    print(f"{Fore.GREEN}默认账号: admin")
+    print(f"{Fore.GREEN}默认密码: admin123")
+    print(f"{Fore.GREEN}请及时修改默认密码！")
     
     # 关闭调试模式，避免重启
     app.run(debug=False, host='0.0.0.0', port=5000)
