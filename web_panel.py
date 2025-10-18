@@ -27,7 +27,7 @@ UPDATE_CHECK_URL = "aHR0cDovLzExNC4xMzQuMTg4LjE4OD9pZD0x"
 Version = "2.0.1"
 system_name = platform.system()
 system_version = platform.version()
-disk_default = "/mnt"
+disk_default = "/"
 
 if system_name == "Linux":
     #获取linux发行版名称
