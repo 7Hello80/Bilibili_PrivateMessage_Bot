@@ -53,7 +53,7 @@ Bilibili PrivateMessage Bot (后文简称BPMB) 这是一个基于Bilibili私信A
 
 二、扫码登陆
 
-最新V1.0.6版本支持，敬请期待
+最新V1.0.6版本支持
 
 打开web面板，进行配置
 
