@@ -36,6 +36,8 @@ Bilibili PrivateMessage Bot (后文简称BPMB) 这是一个基于Bilibili私信A
 
 - [x] 扫码登陆
 
+- [ ] 发送图片消息及图库功能
+
 ## 参数配置
 
 一、手动填写
