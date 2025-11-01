@@ -13,6 +13,8 @@ import init
 import os
 import threading
 import io
+import wbi
+import bili_ticket
 
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
@@ -28,7 +30,7 @@ else:
 
 config = ConfigManage.ConfigManager("config.json")
 
-version = "1.0.6"
+version = "1.0.7"
 
 # 初始化colorama
 colorama.init(autoreset=True)
@@ -63,6 +65,8 @@ class BotManager:
                     keywords=account.get("keyword", {}),
                     at_user=account.get("at_user", False),
                     auto_focus=account.get("auto_focus", False),
+                    auto_reply_follow=account.get("auto_reply_follow", False),
+                    follow_reply_message=account.get("follow_reply_message", "感谢关注！"),
                     poll_interval=5,
                 )
                 self.bots.append(bot)
@@ -83,7 +87,7 @@ class BotManager:
         print(f"{Fore.GREEN}✓ 已停止所有机器人实例")
 
 class SimpleBilibiliReply:
-    def __init__(self, account_name, sessdata, bili_jct, self_uid, device_id, keywords, at_user, auto_focus, poll_interval=5):
+    def __init__(self, account_name, sessdata, bili_jct, self_uid, device_id, keywords, at_user, auto_focus, poll_interval=5, auto_reply_follow=False, follow_reply_message="感谢关注！"):
         self.account_name = account_name
         self.sessdata = sessdata
         self.bili_jct = bili_jct
@@ -101,7 +105,7 @@ class SimpleBilibiliReply:
             "Content-Type": "application/x-www-form-urlencoded",
             "Origin": "https://message.bilibili.com",
             "Referer": "https://message.bilibili.com/",
-            "Cookie": f"SESSDATA={sessdata}; bili_jct={bili_jct}"
+            "Cookie": f"SESSDATA={sessdata}; bili_jct={bili_jct}; bili_ticket={bili_ticket.get()}"
         }
         
         # 设置自动回复关键词（账号特定 + 全局）
@@ -111,6 +115,11 @@ class SimpleBilibiliReply:
         
         self.at_user = at_user
         self.auto_focus = auto_focus
+
+        self.auto_reply_follow = auto_reply_follow
+        self.follow_reply_message = follow_reply_message
+        
+        self.processed_follow_ids = set()
         
         self.processed_msg_ids = set()
         print(f"{Fore.GREEN}✓ {Fore.BLUE}[{self.account_name}] 哔哩哔哩私信自动回复机器人启动成功")
@@ -119,7 +128,6 @@ class SimpleBilibiliReply:
         """停止机器人"""
         self.running = False
 
-    # 这里保留原有的所有方法，但修改日志输出以包含账号名称
     def get_sessions(self) -> List[Dict]:
         """获取会话列表"""
         url = "https://api.vc.bilibili.com/session_svr/v1/session_svr/get_sessions"
@@ -142,8 +150,86 @@ class SimpleBilibiliReply:
             print(f"{Fore.RED}✗ [{self.account_name}] 获取会话列表异常: {e}")
         
         return []
+    
+    def get_focus(self) -> Optional[Dict]:
+        api = "https://api.bilibili.com/x/relation/fans"
+        params = {
+            "vmid": self.self_uid,
+            "pn": 1,
+            "ps": 100
+        }
+        try:
+            response = requests.get(api, params=params, headers=self.headers, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data.get("code") == 0:
+                    followers = data.get("data", {}).get("list", [])
+                    return followers
+                else:
+                    print(f"{Fore.RED}✗ [{self.account_name}] 获取粉丝列表API错误: {data.get('message')}")
+            else:
+                print(f"{Fore.RED}✗ [{self.account_name}] 获取粉丝列表HTTP错误: {response.status_code}")
+        except Exception as e:
+            print(f"{Fore.RED}✗ [{self.account_name}] 获取粉丝列表异常: {e}")
+        
+        return None
+    
+    def get_recent_followers(self) -> List[Dict]:
+        """获取最近1分钟内的关注用户"""
+        try:
+            # 获取粉丝列表
+            followers = self.get_focus()
+            if not followers:
+                return []
+            
+            current_time = int(time.time())
+            recent_followers = []
+            
+            for follower in followers:
+                mtime = follower.get("mtime", 0)
+                # 如果关注时间在最近1分钟内
+                if mtime > 0 and current_time - mtime <= 60:
+                    recent_followers.append(follower)
+            
+            if recent_followers:
+                print(f"{Fore.GREEN}✓ [{self.account_name}] 发现 {len(recent_followers)} 个新关注用户")
+            
+            return recent_followers
+            
+        except Exception as e:
+            print(f"{Fore.RED}✗ [{self.account_name}] 获取最近关注用户异常: {e}")
+            return []
+    
+    def process_new_followers(self):
+        """处理新关注用户"""
+        if not self.auto_reply_follow:
+            return
+            
+        try:
+            recent_followers = self.get_recent_followers()
+            if not recent_followers:
+                return
+                
+            for follower in recent_followers:
+                follower_uid = follower.get("mid")
+                uname = follower.get("uname", "未知用户")
+                
+                if not follower_uid or follower_uid in self.processed_follow_ids:
+                    continue
+                
+                print(f"{Fore.GREEN}✓ [{self.account_name}] 发现新关注用户: {uname}({follower_uid})")
+                
+                # 发送关注回复消息
+                success = self.send_message(follower_uid, self.follow_reply_message)
+                if success:
+                    print(f"{Fore.GREEN}✓ [{self.account_name}] 已向新关注用户 {uname}({follower_uid}) 发送欢迎消息")
+                    self.processed_follow_ids.add(follower_uid)
+                else:
+                    print(f"{Fore.RED}✗ [{self.account_name}] 向新关注用户 {uname}({follower_uid}) 发送消息失败")
+                    
+        except Exception as e:
+            print(f"{Fore.RED}✗ [{self.account_name}] 处理新关注用户异常: {e}")
 
-    # 修改所有方法，在日志输出中添加 [账号名称] 前缀
     def Auto_focus(self, mid: int) -> Optional[Dict]:
         url = "https://api.bilibili.com/x/relation/modify"
         params = {
@@ -253,6 +339,11 @@ class SimpleBilibiliReply:
 
     def send_message(self, receiver_id: int, message: str) -> bool:
         """发送消息"""
+        # 检查是否是图片消息
+        if message.startswith("[bili_image:"):
+            return self.send_image_message(receiver_id, message)
+        
+        # 文本消息
         url = "https://api.vc.bilibili.com/web_im/v1/web_im/send_msg"
         
         timestamp = int(time.time())
@@ -270,7 +361,7 @@ class SimpleBilibiliReply:
             'msg[msg_type]': '1',
             'msg[msg_status]': '0',
             'msg[content]': json.dumps(content_json),
-            'msg[new_face_version]': '0',
+            'msg[new_face_version]': '1',
             'msg[canal_token]': '',
             'msg[dev_id]': self.device_id,
             'msg[timestamp]': str(timestamp),
@@ -285,7 +376,7 @@ class SimpleBilibiliReply:
             'w_receiver_id': str(receiver_id),
             'w_dev_id': self.device_id,
             'w_rid': self.generate_rid(),
-            'wts': str(timestamp)
+            'wts': wbi.get().get("data").get("wts")
         }
         
         try:
@@ -318,14 +409,80 @@ class SimpleBilibiliReply:
         
         return False
 
-    def generate_rid(self) -> str:
-        """生成随机RID参数"""
-        import hashlib
-        import random
-        import string
+    def send_image_message(self, receiver_id: int, image_message: str) -> bool:
+        """发送图片消息"""
+        try:
+            # 解析图片URL [bili_image:url]
+            if image_message.startswith("[bili_image:") and image_message.endswith("]"):
+                image_url = image_message[12:-1].strip()
+                
+                # 构建图片消息内容
+                image_content = {
+                    "url": image_url,
+                    "height": 300,
+                    "width": 300,
+                    "imageType": "jpeg",
+                    "original": 1,
+                    "size": 100
+                }
+                
+                url = "https://api.vc.bilibili.com/web_im/v1/web_im/send_msg"
+                timestamp = int(time.time())
+                
+                form_data = {
+                    'msg[sender_uid]': str(self.self_uid),
+                    'msg[receiver_type]': '1',
+                    'msg[receiver_id]': str(receiver_id),
+                    'msg[msg_type]': '2',  # 图片消息类型
+                    'msg[msg_status]': '0',
+                    'msg[content]': json.dumps(image_content),
+                    'msg[new_face_version]': '1',
+                    'msg[canal_token]': '',
+                    'msg[dev_id]': self.device_id,
+                    'msg[timestamp]': str(timestamp),
+                    'from_firework': '0',
+                    'build': '0',
+                    'mobi_app': 'web',
+                    'csrf': self.bili_jct
+                }
+                
+                params = {
+                    'w_sender_uid': str(self.self_uid),
+                    'w_receiver_id': str(receiver_id),
+                    'w_dev_id': self.device_id,
+                    'w_rid': self.generate_rid(),
+                    'wts': wbi.get().get("data").get("wts")
+                }
+                
+                response = requests.post(
+                    url, 
+                    params=params,
+                    data=form_data, 
+                    headers=self.headers, 
+                    timeout=10
+                )
+                
+                print(f"{Fore.GREEN}✓ [{self.account_name}] 发送图片消息响应状态: {Fore.MAGENTA}{response.status_code}")
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    print(f"{Fore.GREEN}✓ [{self.account_name}] 发送图片消息响应内容: {Fore.MAGENTA}{data}")
+                    
+                    if data.get("code") == 0:
+                        print(f"{Fore.GREEN}✓ [{self.account_name}] 成功发送图片给 {Fore.MAGENTA}{receiver_id}")
+                        return True
+                    else:
+                        print(f"{Fore.RED}✗ [{self.account_name}] 发送图片失败: {Fore.MAGENTA}{data.get('message')} (代码: {data.get('code')})")
+                else:
+                    print(f"{Fore.RED}✗ [{self.account_name}] 发送图片HTTP错误: {Fore.MAGENTA}{response.status_code}")
+                    
+        except Exception as e:
+            print(f"{Fore.RED}✗ [{self.account_name}] 发送图片消息异常: {Fore.MAGENTA}{e}")
         
-        random_str = ''.join(random.choices(string.ascii_letters + string.digits, k=16))
-        return hashlib.md5(random_str.encode()).hexdigest()
+        return False
+
+    def generate_rid(self) -> str:
+        return wbi.get().get("data").get("w_rid")
 
     def process_messages(self):
         """处理消息"""
@@ -396,9 +553,15 @@ class SimpleBilibiliReply:
         print(f"{Fore.GREEN}[{self.account_name}] 项目运行日志：")
         
         self.running = True
+        last_follow_check = 0
+        follow_check_interval = 10
         try:
             while self.running:
                 self.process_messages()
+                current_time = time.time()
+                if current_time - last_follow_check >= follow_check_interval:
+                    self.process_new_followers()
+                    last_follow_check = current_time
                 time.sleep(self.poll_interval)
                 
         except KeyboardInterrupt:

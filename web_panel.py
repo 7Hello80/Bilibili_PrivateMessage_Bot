@@ -18,13 +18,15 @@ from io import BytesIO
 import platform
 from colorama import Fore, Back, Style
 import distro
+import mimetypes
+import bili_ticket
 
 # 导入现有的配置管理
 import ConfigManage
 
-CURRENT_VERSION = "MS4wLjY="
+CURRENT_VERSION = "MS4wLjc="
 UPDATE_CHECK_URL = "aHR0cDovLzExNC4xMzQuMTg4LjE4OD9pZD0x"
-Version = "2.0.1"
+Version = "2.0.2"
 system_name = platform.system()
 system_version = platform.version()
 disk_default = "/mnt"
@@ -200,6 +202,7 @@ def restart_bot_mod():
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             universal_newlines=True,
+            encoding='utf-8',
             bufsize=1
         )
         
@@ -240,18 +243,31 @@ def login_required(f):
 def get_python3_path():
     def is_python3(cmd):
         try:
+            # 用universal_newlines替代text，兼容Python 3.7以下版本
             result = subprocess.run(
                 [cmd, '--version'],
-                capture_output=True,
-                text=True,
+                stdout=subprocess.PIPE,  # 捕获标准输出
+                stderr=subprocess.PIPE,  # 捕获标准错误（Python版本信息常输出到这里）
+                universal_newlines=True,  # 替代text=True，将输出转为字符串
                 timeout=5
             )
+            # 合并输出
             version_output = result.stdout + result.stderr
             return 'Python 3' in version_output
-        except:
+        except Exception as e:
             return False
     
-    # 检查虚拟环境
+    # 1. 优先检查宝塔面板Python的常见安装路径（根据实际路径调整）
+    baota_python_paths = [
+        '/www/server/python3/bin/python3',  # 宝塔常见路径
+        '/usr/local/bin/python3',
+        '/www/server/python/bin/python3'
+    ]
+    for path in baota_python_paths:
+        if os.path.exists(path) and is_python3(path):
+            return path
+    
+    # 2. 检查虚拟环境
     venv_dirs = ['.venv', 'venv', 'env']
     for venv_dir in venv_dirs:
         if sys.platform == "win32":
@@ -263,13 +279,18 @@ def get_python3_path():
             if os.path.exists(path) and is_python3(path):
                 return path
     
-    # 检查系统命令
-    commands = ['python3', 'python'] if sys.platform != "win32" else ['python']
+    # 3. 检查系统命令（补充宝塔路径到环境变量）
+    if sys.platform != "win32":
+        os.environ["PATH"] += ":/www/server/python3/bin:/usr/local/bin"
+        commands = ['python3', 'python']
+    else:
+        commands = ['python']
+    
     for cmd in commands:
         if is_python3(cmd):
             return cmd
     
-    return 'python3'
+    return None
 
 # 多账号管理路由
 @app.route('/api/get_accounts')
@@ -279,6 +300,7 @@ def get_accounts():
     accounts = bot_config.get_accounts()
     global_keywords = bot_config.get_global_keywords()
     return jsonify({
+        'code': '0',
         'accounts': accounts,
         'global_keywords': global_keywords
     })
@@ -302,6 +324,8 @@ def add_account():
             "keyword": account_data.get("keywords", {}),
             "at_user": account_data.get("at_user", False),
             "auto_focus": account_data.get("auto_focus", False),
+            "auto_reply_follow": account_data.get("auto_reply_follow", False),  # 新增
+            "follow_reply_message": account_data.get("follow_reply_message", "感谢关注！"),  # 新增
             "enabled": account_data.get("enabled", True)
         }
         
@@ -313,6 +337,121 @@ def add_account():
     except Exception as e:
         log_handler.add_log(f"添加账号失败: {str(e)}", "ERROR")
         return jsonify({'success': False, 'message': f'添加失败: {str(e)}'})
+
+# 将图片上传到哔哩哔哩图床
+@app.route('/api/upload_bfs', methods=['POST'])
+@login_required
+def upload_bfs():
+    # 1. 基础参数校验
+    api = "https://api.bilibili.com/x/dynamic/feed/draw/upload_bfs"
+    file = request.files.get("file_up")  # 获取前端上传的文件
+    account_index = request.form.get("account_index", type=int, default=0)
+    
+    # 校验文件是否存在
+    if not file or file.filename == '':
+        return jsonify({"code": -1, "message": "未获取到有效图片文件"}), 400
+    
+    try:
+        # 获取账号配置
+        accounts = bot_config.get_accounts()
+        if account_index < 0 or account_index >= len(accounts):
+            return jsonify({"code": -2, "message": "账号索引无效"}), 400
+        
+        account = accounts[account_index]
+        account_config = account.get("config", {})
+        
+        sessdata = account_config.get("sessdata", "")
+        bili_jct = account_config.get("bili_jct", "")
+        
+        if not sessdata or not bili_jct:
+            return jsonify({"code": -3, "message": "所选账号的Cookie信息不完整"}), 400
+        
+        # 2. 构造请求参数
+        # 构造文件参数
+        files = {
+            "file_up": (
+                file.filename,  # 文件名
+                file.stream,    # 文件流
+                file.mimetype   # MIME类型
+            )
+        }
+        
+        # 构造表单数据
+        data = {
+            "category": "daily",  # 日常类型
+            "csrf": bili_jct,     # CSRF Token
+            "biz": "im"           # 业务类型
+        }
+        
+        # 3. 构造请求头和Cookie
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://www.bilibili.com/",
+            "Origin": "https://www.bilibili.com"
+        }
+        
+        # 传递登录Cookie
+        request_cookies = {
+            "SESSDATA": sessdata,
+            "bili_jct": bili_jct,
+            "bili_ticket": bili_ticket.get()
+        }
+        
+        # 4. 发送请求到Bilibili API
+        response = requests.post(
+            url=api,
+            files=files,
+            data=data,
+            cookies=request_cookies,
+            headers=headers,
+            timeout=30
+        )
+        response.raise_for_status()
+        
+        # 5. 解析响应
+        result = response.json()
+        
+        if result.get("code") == 0:
+            data = result.get("data", {})
+            image_url = data.get("image_url", "")
+            
+            if image_url:
+                # 保存图片信息到配置
+                image_data = {
+                    "url": image_url,
+                    "name": file.filename,
+                    "size": request.content_length or 0,
+                    "upload_time": datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                    "upload_account": account.get("name", f"账号{account_index+1}")
+                }
+                
+                bot_config.add_image(image_data)
+                log_handler.add_log(f"图片上传成功: {file.filename} -> {image_url}")
+                
+                return jsonify({
+                    "code": 0,
+                    "message": "上传成功",
+                    "data": {
+                        "image_url": image_url,
+                        "image_width": data.get("image_width", 0),
+                        "image_height": data.get("image_height", 0)
+                    }
+                })
+            else:
+                return jsonify({"code": -8, "message": "上传成功但未获取到图片URL"}), 500
+        else:
+            error_msg = result.get("message", "未知错误")
+            return jsonify({"code": result.get("code", -9), "message": f"B站API返回错误: {error_msg}"}), 500
+        
+    except requests.exceptions.HTTPError as e:
+        log_handler.add_log(f"上传图片HTTP错误: {str(e)}", "ERROR")
+        return jsonify({"code": -5, "message": f"API请求失败: {str(e)}"}), 500
+    except requests.exceptions.JSONDecodeError:
+        log_handler.add_log("上传图片响应非JSON格式", "ERROR")
+        return jsonify({"code": -6, "message": "API返回非JSON数据", "data": response.text}), 500
+    except Exception as e:
+        log_handler.add_log(f"上传图片内部错误: {str(e)}", "ERROR")
+        return jsonify({"code": -7, "message": f"服务器内部错误: {str(e)}"}), 500
 
 @app.route('/api/check_update')
 @login_required
@@ -355,6 +494,8 @@ def update_account(account_index):
             "keyword": existing_keywords,  # 保留原有的关键词，不覆盖
             "at_user": account_data.get("at_user", False),
             "auto_focus": account_data.get("auto_focus", False),
+            "auto_reply_follow": account_data.get("auto_reply_follow", False),  # 新增
+            "follow_reply_message": account_data.get("follow_reply_message", "感谢关注！"),  # 新增
             "enabled": account_data.get("enabled", True)
         }
         
@@ -503,6 +644,57 @@ def qrcode_login():
         log_handler.add_log(f"申请登录二维码失败: {str(e)}", "ERROR")
         return jsonify({'success': False, 'message': f'申请登录二维码失败: {str(e)}'})
 
+@app.route('/api/get_images')
+@login_required
+def get_images():
+    """获取所有图片"""
+    try:
+        images = bot_config.get_images()
+        return jsonify({'success': True, 'images': images})
+    except Exception as e:
+        log_handler.add_log(f"获取图片列表失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'获取失败: {str(e)}'})
+
+@app.route('/api/delete_image', methods=['POST'])
+@login_required
+def delete_image():
+    """删除图片"""
+    try:
+        image_url = request.json.get('image_url')
+        if not image_url:
+            return jsonify({'success': False, 'message': '图片URL不能为空'})
+        
+        bot_config.delete_image(image_url)
+        log_handler.add_log(f"删除图片: {image_url}")
+        return jsonify({'success': True, 'message': '图片删除成功'})
+    
+    except Exception as e:
+        log_handler.add_log(f"删除图片失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'删除失败: {str(e)}'})
+
+@app.route('/api/save_image', methods=['POST'])
+@login_required
+def save_image():
+    """保存图片信息到配置"""
+    try:
+        image_data = request.json
+        if not image_data.get('url'):
+            return jsonify({'success': False, 'message': '图片URL不能为空'})
+        
+        # 添加时间戳
+        image_data['upload_time'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        success = bot_config.add_image(image_data)
+        if success:
+            log_handler.add_log(f"保存图片: {image_data['url']}")
+            return jsonify({'success': True, 'message': '图片保存成功'})
+        else:
+            return jsonify({'success': False, 'message': '图片已存在'})
+    
+    except Exception as e:
+        log_handler.add_log(f"保存图片失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'保存失败: {str(e)}'})
+
 # 哔哩哔哩扫码登录接口 - 检查二维码登录状态
 @app.route('/api/bilibili_qrcode_status', methods=['GET'])
 @login_required
@@ -549,7 +741,7 @@ def qrcode_status():
             # 验证登录状态并获取用户信息
             user_api = "https://api.bilibili.com/x/web-interface/nav"
             user_headers = headers.copy()
-            user_headers["Cookie"] = f"SESSDATA={sessdata}; bili_jct={bili_jct}"
+            user_headers["Cookie"] = f"SESSDATA={sessdata}; bili_jct={bili_jct}; bili_ticket={bili_ticket.get()}"
             
             user_response = requests.get(user_api, headers=user_headers, timeout=10)
             user_response.raise_for_status()
@@ -673,6 +865,7 @@ def start_bot():
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             universal_newlines=True,
+            encoding='utf-8',
             bufsize=1
         )
         
@@ -774,6 +967,50 @@ def get_system_stats():
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
 
+@app.route('/api/proxy_image')
+@login_required
+def proxy_image():
+    """增强版图片代理，解决防盗链问题"""
+    image_url = request.args.get('url')
+    if not image_url:
+        return "Missing URL", 400
+    
+    try:
+        # 设置各种请求头，模拟正常浏览器访问
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://www.bilibili.com/",
+            "Origin": "https://www.bilibili.com",
+            "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+            "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+            "Accept-Encoding": "identity",  # 避免压缩，我们需要原始数据
+            "Cache-Control": "no-cache"
+        }
+        
+        response = requests.get(image_url, headers=headers, timeout=10, stream=True)
+        response.raise_for_status()
+        
+        # 确定内容类型
+        content_type = response.headers.get('content-type', 'image/jpeg')
+        
+        # 返回图片数据
+        return Response(
+            response.iter_content(chunk_size=8192),
+            content_type=content_type,
+            headers={
+                'Cache-Control': 'public, max-age=86400',  # 缓存24小时
+                'Access-Control-Allow-Origin': '*',  # 允许跨域
+                'Content-Disposition': 'inline'  # 内联显示
+            }
+        )
+        
+    except requests.exceptions.RequestException as e:
+        log_handler.add_log(f"图片代理请求失败: {str(e)}", "ERROR")
+        return "Image request failed", 502
+    except Exception as e:
+        log_handler.add_log(f"图片代理内部错误: {str(e)}", "ERROR")
+        return "Internal server error" + e, 500
+
 # 添加系统监控API路由
 @app.route('/api/system_stats')
 @login_required
@@ -817,6 +1054,7 @@ def restart_bot():
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             universal_newlines=True,
+            encoding='utf-8',
             bufsize=1
         )
         
@@ -904,6 +1142,9 @@ def create_templates():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="renderer" content="webkit">
+    <meta name="format-detection" content="telephone=no">
+    <meta name="spm_prefix" content="333.40164">
     <title>{% block title %}B站私信机器人控制面板{% endblock %}</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
@@ -933,6 +1174,10 @@ def create_templates():
             }
         }
     </script>
+    <!-- 引入 layui.css -->
+    <link href="//unpkg.com/layui@2.12.1/dist/css/layui.css" rel="stylesheet">
+    <!-- 引入 layui.js -->
+    <script src="//unpkg.com/layui@2.12.1/dist/layui.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
         
@@ -1033,7 +1278,46 @@ def create_templates():
             transition: stroke-dashoffset 0.8s ease-in-out;
             transform-origin: center;
         }
-        
+        /* 账号选择器样式 */
+        .account-selector {
+            transition: all 0.3s ease;
+        }
+
+        .account-selector:focus {
+            border-color: #3b82f6;
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+        }
+        /* 上传区域样式 */
+        #upload-area {
+            transition: all 0.3s ease;
+            border: 2px dashed #d1d5db;
+        }
+
+        #upload-area:hover {
+            border-color: #3b82f6;
+            background-color: #f8fafc;
+        }
+
+        #upload-area.dragover {
+            border-color: #3b82f6;
+            background-color: #eff6ff;
+            transform: scale(1.02);
+        }
+
+        /* 进度条颜色过渡 */
+        #progress-bar {
+            transition: width 0.3s ease, background-color 0.3s ease;
+        }
+
+        /* 取消按钮动画 */
+        #cancel-upload-btn {
+            transition: all 0.3s ease;
+        }
+
+        #cancel-upload-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        }
     </style>
 </head>
 <body class="bg-gray-50 font-sans">
@@ -1154,6 +1438,10 @@ def create_templates():
             <a href="#about" onclick="showSection('about')" class="nav-item flex items-center space-x-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-lg transition">
                 <i class="fa fa-user text-gray-400 w-5"></i>
                 <span>关于我们</span>
+            </a>
+            <a href="#image_bed" onclick="showSection('image_bed')" class="nav-item flex items-center space-x-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-lg transition">
+                <i class="fa fa-images text-gray-400 w-5"></i>
+                <span>图床管理</span>
             </a>
             <a href="https://github.com/7Hello80/Bilibili_PrivateMessage_Bot" target="_blank" class="nav-item flex items-center space-x-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-lg transition">
                 <i class="fab fa-github text-gray-800 w-5"></i>
@@ -1642,6 +1930,187 @@ def create_templates():
             </div>
         </div>
 
+        <!-- 图床管理 -->
+        <div id="image_bed" class="section p-4 lg:p-6" style="display: none;">
+            <div class="mb-6">
+                <div class="flex items-center">
+                    <button class="mobile-menu-button lg:hidden mr-3 p-2 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 transition">
+                        <i class="fa fa-bars"></i>
+                    </button>
+                    <div>
+                        <h2 class="text-2xl lg:text-3xl font-bold text-gray-800">图床管理</h2>
+                        <p class="text-gray-600 mt-2">管理上传的图片，可用于自动回复</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- 图片上传区域 -->
+                <div class="lg:col-span-1">
+                    <div class="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+                        <h3 class="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                            <i class="fa fa-cloud-upload-alt text-blue-500 mr-2"></i>上传图片
+                        </h3>
+                        
+                        <!-- 上传表单 -->
+                        <form id="upload-image-form" enctype="multipart/form-data" class="space-y-4">
+                            <!-- Layui 选择器 -->
+                            <div class="space-y-2">
+                                <label class="block text-sm font-medium text-gray-700 mb-2">选择上传账号</label>
+                                
+                                <div class="layui-form">
+                                    <select id="upload-account" lay-search lay-verify="required">
+                                        <option value="">选择上传账号...</option>
+                                        <!-- 选项将通过JS动态加载 -->
+                                    </select>
+                                </div>
+                                
+                                <p class="text-xs text-gray-500 mt-1">需要有效的 SESSDATA 和 bili_jct</p>
+                            </div>
+
+                            <!-- 上传区域 -->
+                            <div class="border-2 border-dashed border-gray-300 rounded-xl p-6 text-center transition-all duration-300 hover:border-blue-400 hover:bg-blue-50 cursor-pointer group" id="upload-area">
+                                <input type="file" id="image-file" name="file_up" accept="image/jpeg,image/jpg,image/png,image/gif,image/webp" class="hidden">
+                                <div class="cursor-pointer">
+                                    <i class="fa fa-cloud-upload-alt text-3xl text-gray-400 mb-3 transition-colors group-hover:text-blue-400"></i>
+                                    <p class="text-gray-700 font-medium text-sm">点击或拖拽上传</p>
+                                    <p class="text-xs text-gray-500 mt-1">支持 JPG, PNG, GIF, WebP</p>
+                                    <p class="text-xs text-gray-500">最大 10MB</p>
+                                </div>
+                            </div>
+                            
+                            <!-- 文件信息 -->
+                            <div id="file-info" class="hidden">
+                                <div class="bg-blue-50 border border-blue-200 rounded-xl p-4">
+                                    <div class="flex items-center justify-between">
+                                        <div class="flex items-center space-x-3">
+                                            <i class="fa fa-file-image text-blue-500"></i>
+                                            <div>
+                                                <p class="text-sm font-medium text-blue-800" id="file-name"></p>
+                                                <p class="text-xs text-blue-600 mt-1" id="file-size"></p>
+                                            </div>
+                                        </div>
+                                        <button type="button" onclick="resetFileSelection()" class="text-blue-600 hover:text-blue-800 transition-colors">
+                                            <i class="fa fa-times"></i>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- 上传进度 -->
+                            <div id="upload-progress" class="hidden">
+                                <div class="flex items-center justify-between mb-2">
+                                    <span class="text-sm font-medium text-gray-700">上传进度</span>
+                                    <span id="progress-text" class="text-sm font-semibold text-blue-600">0%</span>
+                                </div>
+                                <div class="w-full bg-gray-200 rounded-full h-2 mb-4 overflow-hidden">
+                                    <div id="progress-bar" class="bg-gradient-to-r from-blue-500 to-purple-600 h-2 rounded-full transition-all duration-300" style="width: 0%"></div>
+                                </div>
+                            </div>
+                            
+                            <!-- 操作按钮 -->
+                            <div class="flex space-x-3">
+                                <button type="submit" id="upload-button" 
+                                        class="flex-1 px-4 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center shadow-sm hover:shadow-md">
+                                    <i class="fa fa-upload mr-2"></i>
+                                    <span>上传图片</span>
+                                </button>
+                                <button type="button" id="cancel-upload-btn" 
+                                        class="px-4 py-3 bg-gray-500 text-white rounded-lg hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-gray-400 transition-all duration-200 hidden shadow-sm hover:shadow-md">
+                                    <i class="fa fa-times"></i>
+                                </button>
+                            </div>
+                        </form>
+                        
+                        <!-- 使用说明 -->
+                        <div class="mt-6 p-4 bg-gray-50 rounded-lg border border-gray-200">
+                            <h4 class="text-sm font-semibold text-gray-700 mb-3 flex items-center">
+                                <i class="fa fa-info-circle text-blue-500 mr-2"></i>
+                                使用说明
+                            </h4>
+                            <ul class="text-xs text-gray-600 space-y-2">
+                                <li class="flex items-start">
+                                    <i class="fa fa-check-circle text-green-500 mr-2 mt-0.5 flex-shrink-0"></i>
+                                    <span>图片将存储在 B 站图床，稳定可靠</span>
+                                </li>
+                                <li class="flex items-start">
+                                    <i class="fa fa-check-circle text-green-500 mr-2 mt-0.5 flex-shrink-0"></i>
+                                    <span>在关键词回复中使用: <code class="bg-blue-100 text-blue-700 px-1 rounded text-xs">[bili_image:图片URL]</code>可发送图片，只能使用b站图床的图片URL，回复中只能单独出现，不能与其他文字混合使用</span>
+                                </li>
+                                <li class="flex items-start">
+                                    <i class="fa fa-check-circle text-green-500 mr-2 mt-0.5 flex-shrink-0"></i>
+                                    <span>点击图片可预览，右键可复制 URL 或删除</span>
+                                </li>
+                            </ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 图片列表 -->
+                <div class="lg:col-span-2">
+                    <div class="bg-white rounded-xl shadow-sm border border-gray-200">
+                        <div class="px-6 py-4 border-b border-gray-200">
+                            <div class="flex items-center justify-between">
+                                <div>
+                                    <h3 class="text-lg font-semibold text-gray-800">图片库</h3>
+                                    <p class="text-sm text-gray-600 mt-1">共 <span id="images-count" class="font-semibold text-blue-600">0</span> 张图片</p>
+                                </div>
+                                <div class="flex items-center space-x-2">
+                                    <button onclick="loadImages()" class="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all duration-200" title="刷新">
+                                        <i class="fa fa-refresh"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="p-4">
+                            <!-- 空状态 -->
+                            <div id="empty-images" class="text-center py-12 hidden">
+                                <div class="max-w-xs mx-auto">
+                                    <i class="fa fa-images text-5xl text-gray-300 mb-4"></i>
+                                    <p class="text-gray-500 font-medium text-lg">暂无图片</p>
+                                    <p class="text-sm text-gray-400 mt-2">上传第一张图片开始使用图床功能</p>
+                                </div>
+                            </div>
+
+                            <!-- 图片网格 -->
+                            <div id="images-list" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                                <div class="text-center text-gray-500 py-8 col-span-full">
+                                    <i class="fa fa-spinner fa-spin text-xl mb-2 text-blue-500"></i>
+                                    <p class="text-sm">加载图片中...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 图片预览模态框 -->
+        <div id="image-preview-modal" class="hidden fixed inset-0 bg-black bg-opacity-75 z-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-xl max-w-4xl max-h-full overflow-hidden w-full">
+                <div class="p-4 border-b border-gray-200 flex justify-between items-center">
+                    <h3 class="text-lg font-semibold text-gray-800" id="preview-title">图片预览</h3>
+                    <button onclick="closePreviewModal()" class="p-2 hover:bg-gray-100 rounded-lg transition">
+                        <i class="fa fa-times text-gray-600"></i>
+                    </button>
+                </div>
+                <div class="p-6 max-h-96 overflow-auto">
+                    <img id="preview-image" src="" alt="预览" class="max-w-full max-h-80 object-contain mx-auto rounded-lg" referrerpolicy="no-referrer">
+                </div>
+                <div class="p-4 border-t border-gray-200 bg-gray-50 flex justify-between items-center">
+                    <div class="flex space-x-2">
+                        <button onclick="copyImageUrl(currentPreviewUrl)" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition flex items-center">
+                            <i class="fa fa-copy mr-2"></i>复制URL
+                        </button>
+                    </div>
+                    <button onclick="deleteImage(currentPreviewUrl)" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition flex items-center">
+                        <i class="fa fa-trash mr-2"></i>删除
+                    </button>
+                </div>
+            </div>
+        </div>
+
         <!-- 关于我们页面 -->
         <div id="about" class="section p-4 lg:p-6" style="display: none;">
             <div class="mb-6">
@@ -1667,8 +2136,8 @@ def create_templates():
                             </div>
                             <div class="flex-1 text-center md:text-left">
                                 <h1 class="text-3xl font-bold text-gray-800 mb-2">淡意往事</h1>
-                                <p class="text-lg text-gray-600 mb-4">全栈开发工程师</p>
-                                <p class="text-gray-500 leading-relaxed">一名热爱技术的全栈开发者。本人目前还是在校生，没啥资金，希望可以打赏一下我们</p>
+                                <p class="text-lg text-gray-600 mb-4">开发人员</p>
+                                <p class="text-gray-500 leading-relaxed">一名热爱技术的开发者。本人目前还是在校生，没啥资金，希望可以打赏一下我们</p>
                                 <div class="flex justify-center md:justify-start space-x-4 mt-4">
                                     <a href="https://github.com/7hello80" class="text-gray-500 hover:text-blue-500 transition-colors duration-200" target="_blank">
                                         <i class="fab fa-github text-xl"></i>
@@ -1729,6 +2198,15 @@ def create_templates():
                                         <p class="text-sm text-gray-500">图标字体库</p>
                                     </div>
                                 </div>
+                                <div class="flex items-center p-3 rounded-lg border border-gray-100 hover:border-blue-200 hover:bg-blue-50 transition-all duration-200">
+                                    <div class="w-10 h-10 rounded-lg bg-gradient-to-r from-blue-100 to-blue-200 flex items-center justify-center mr-3">
+                                        <i class="fab fa-css3 text-blue-600"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="font-semibold text-gray-800">LayUI</h3>
+                                        <p class="text-sm text-gray-500">极简模块化 Web UI 组件库</p>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -1740,7 +2218,7 @@ def create_templates():
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                 <div class="flex items-center p-3 rounded-lg border border-gray-100 hover:border-green-200 hover:bg-green-50 transition-all duration-200">
                                     <div class="w-10 h-10 rounded-lg bg-gradient-to-r from-green-100 to-green-200 flex items-center justify-center mr-3">
-                                        <i class="fa fa-python text-green-600"></i>
+                                        <i class="fab fa-python text-green-600"></i>
                                     </div>
                                     <div>
                                         <h3 class="font-semibold text-gray-800">Python</h3>
@@ -1882,12 +2360,12 @@ def create_templates():
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-2">SESSDATA</label>
-                                <input type="text" name="sessdata" required
+                                <input type="password" name="sessdata" required
                                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-2">BILI_JCT</label>
-                                <input type="text" name="bili_jct" required
+                                <input type="password" name="bili_jct" required
                                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition">
                             </div>
                         </div>
@@ -1923,6 +2401,24 @@ def create_templates():
                                 </div>
                             </div>
                         </div>
+                    </div>
+                    <!-- 在添加账号模态框中添加关注自动回复配置 -->
+                    <div class="flex items-center justify-between space-x-4 mt-4">
+                        <div class="flex items-center">
+                            <input type="checkbox" id="add-account-auto-reply-follow" name="auto_reply_follow"
+                                class="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500">
+                            <label for="add-account-auto-reply-follow" class="ml-2 text-sm text-gray-700">启用关注自动回复</label>
+                        </div>
+                    </div>
+
+                    <!-- 添加关注回复消息输入框 -->
+                    <div id="add-follow-reply-container" class="mt-4 hidden">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">关注回复消息</label>
+                        <textarea id="add-account-follow-reply-message" name="follow_reply_message"
+                                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
+                                rows="3"
+                                placeholder="请输入关注自动回复的消息内容（只能设置一条）">感谢关注！</textarea>
+                        <p class="text-xs text-gray-500 mt-1">此消息将发送给新关注您的用户</p>
                     </div>
                     <div class="mt-6 flex justify-end space-x-3">
                         <button type="button" onclick="hideAddAccountModal()"
@@ -1960,12 +2456,12 @@ def create_templates():
                         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-2">SESSDATA</label>
-                                <input type="text" id="edit-account-sessdata" name="sessdata" required
+                                <input type="password" id="edit-account-sessdata" name="sessdata" required
                                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition">
                             </div>
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-2">BILI_JCT</label>
-                                <input type="text" id="edit-account-bili_jct" name="bili_jct" required
+                                <input type="password" id="edit-account-bili_jct" name="bili_jct" required
                                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition">
                             </div>
                         </div>
@@ -2038,6 +2534,24 @@ def create_templates():
                             </div>
                         </div>
                     </div>
+                    <!-- 在编辑账号模态框中添加关注自动回复配置 -->
+                    <div class="flex items-center justify-between space-x-4 mt-4">
+                        <div class="flex items-center">
+                            <input type="checkbox" id="edit-account-auto-reply-follow" name="auto_reply_follow"
+                                class="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500">
+                            <label for="edit-account-auto-reply-follow" class="ml-2 text-sm text-gray-700">启用关注自动回复</label>
+                        </div>
+                    </div>
+
+                    <!-- 添加关注回复消息输入框 -->
+                    <div id="follow-reply-container" class="mt-4 hidden">
+                        <label class="block text-sm font-medium text-gray-700 mb-2">关注回复消息</label>
+                        <textarea id="edit-account-follow-reply-message" name="follow_reply_message"
+                                class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
+                                rows="3"
+                                placeholder="请输入关注自动回复的消息内容（只能设置一条）">感谢关注！</textarea>
+                        <p class="text-xs text-gray-500 mt-1">此消息将发送给新关注您的用户</p>
+                    </div>
                     <div class="mt-6 flex justify-end space-x-3">
                         <button type="button" onclick="hideEditAccountModal()"
                                 class="px-4 py-2 text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition">
@@ -2097,6 +2611,19 @@ def create_templates():
 </div>
 
 <script>
+let layuiForm = null;
+
+// 初始化 Layui 表单
+function initLayuiForm() {
+    layui.use('form', function(){
+        layuiForm = layui.form;
+        layuiForm.render();
+    });
+}
+
+// 全局变量
+let currentPreviewUrl = '';
+
 // 移动端菜单控制
 document.addEventListener('DOMContentLoaded', function() {
     // 为所有移动端菜单按钮添加事件监听
@@ -2350,12 +2877,814 @@ function updateLogStats(total, displayed) {
 
 // 复制日志内容
 function copyLogContent(content) {
+    // 检查 clipboard API 是否可用
+    if (!navigator.clipboard) {
+        // 回退方案
+        fallbackCopyTextToClipboard(content);
+        return;
+    }
+    
     navigator.clipboard.writeText(content).then(() => {
         showNotification('日志内容已复制到剪贴板', 'success');
     }).catch(err => {
         console.error('复制失败:', err);
-        showNotification('复制失败', 'error');
+        // 尝试回退方案
+        fallbackCopyTextToClipboard(content);
     });
+}
+
+// 图床管理功能
+function showImageBedSection() {
+    showSection('image_bed');
+    loadImages();
+}
+
+// 图片上传功能
+document.addEventListener('DOMContentLoaded', function() {
+    const uploadForm = document.getElementById('upload-image-form');
+    const fileInput = document.getElementById('image-file');
+    const uploadArea = document.getElementById('upload-area');
+    const fileInfo = document.getElementById('file-info');
+    const fileName = document.getElementById('file-name');
+    const fileSize = document.getElementById('file-size');
+    const uploadProgress = document.getElementById('upload-progress');
+    const progressBar = document.getElementById('progress-bar');
+    const progressText = document.getElementById('progress-text');
+    const uploadButton = document.getElementById('upload-button');
+
+    // 加载上传账号列表
+    function loadUploadAccounts() {
+        fetch('/api/get_accounts')
+            .then(response => response.json())
+            .then(data => {
+                if (data.accounts) {
+                    const select = document.getElementById('upload-account');
+                    select.innerHTML = '';
+                    
+                    let hasValidAccount = false;
+                    
+                    data.accounts.forEach((account, index) => {
+                        if (account.enabled && account.config.sessdata && account.config.bili_jct) {
+                            const option = document.createElement('option');
+                            option.value = index;
+                            option.textContent = `${account.name} (UID: ${account.config.self_uid})`;
+                            select.appendChild(option);
+                            hasValidAccount = true;
+                        }
+                    });
+                    
+                    if (!hasValidAccount) {
+                        select.innerHTML = '<option value="">没有可用的账号</option>';
+                        document.getElementById('upload-button').disabled = true;
+                        showNotification('没有找到可用的B站账号，请先配置有效的SESSDATA和bili_jct', 'warning');
+                    }
+                    
+                    // 重新渲染 Layui 选择器
+                    if (layuiForm) {
+                        layuiForm.render('select');
+                    }
+                }
+            })
+            .catch(error => {
+                console.error('加载账号列表失败:', error);
+                const select = document.getElementById('upload-account');
+                select.innerHTML = '<option value="">加载失败，请刷新页面</option>';
+                if (layuiForm) {
+                    layuiForm.render('select');
+                }
+            });
+    }
+
+    loadUploadAccounts();
+
+    uploadArea.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        uploadArea.classList.add('border-blue-400', 'bg-blue-50');
+    });
+
+    uploadArea.addEventListener('dragenter', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        uploadArea.classList.add('border-blue-400', 'bg-blue-50');
+    });
+
+    uploadArea.addEventListener('dragleave', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        // 只有当鼠标离开上传区域时才移除样式
+        if (!uploadArea.contains(e.relatedTarget)) {
+            uploadArea.classList.remove('border-blue-400', 'bg-blue-50');
+        }
+    });
+
+    uploadArea.addEventListener('drop', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        uploadArea.classList.remove('border-blue-400', 'bg-blue-50');
+        
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            // 处理拖拽的文件
+            handleFileSelect(files[0]);
+            
+            // 同时更新file input，确保表单数据一致
+            const dataTransfer = new DataTransfer();
+            dataTransfer.items.add(files[0]);
+            fileInput.files = dataTransfer.files;
+        }
+    });
+
+    // 点击上传
+    uploadArea.addEventListener('click', function() {
+        fileInput.click();
+    });
+
+    fileInput.addEventListener('change', function() {
+        if (this.files.length > 0) {
+            handleFileSelect(this.files[0]);
+        } else {
+            // 如果没有选择文件，重置状态
+            resetFileSelection();
+        }
+    });
+
+    function handleFileSelect(file) {
+        if (!file) {
+            showNotification('未选择文件', 'error');
+            return;
+        }
+
+        // 检查文件类型
+        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+        if (!file.type.startsWith('image/') || !allowedTypes.includes(file.type.toLowerCase())) {
+            showNotification('请选择有效的图片文件（JPG、PNG、GIF、WebP）', 'error');
+            resetFileSelection();
+            return;
+        }
+
+        // 检查文件大小（限制为10MB）
+        const maxSize = 10 * 1024 * 1024; // 10MB
+        if (file.size > maxSize) {
+            showNotification('图片大小不能超过10MB', 'error');
+            resetFileSelection();
+            return;
+        }
+
+        if (file.size === 0) {
+            showNotification('文件为空，请选择有效的图片文件', 'error');
+            resetFileSelection();
+            return;
+        }
+
+        // 显示文件信息
+        fileName.textContent = file.name;
+        fileSize.textContent = formatFileSize(file.size);
+        fileInfo.classList.remove('hidden');
+
+        // 检查是否有可用的账号
+        const accountSelect = document.getElementById('upload-account');
+        if (accountSelect && accountSelect.value === "") {
+            showNotification('请先选择上传账号', 'error');
+            uploadButton.disabled = true;
+        } else {
+            uploadButton.disabled = false;
+        }
+    }
+
+    function resetFileSelection() {
+        document.getElementById('file-info').classList.add('hidden');
+        document.getElementById('upload-button').disabled = true;
+        document.getElementById('image-file').value = '';
+        document.getElementById('upload-area').classList.remove('border-blue-400', 'bg-blue-50');
+    }
+
+    function formatFileSize(bytes) {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    // 账号选择变化时启用/禁用上传按钮
+    const accountSelect = document.getElementById('upload-account');
+    if (accountSelect) {
+        accountSelect.addEventListener('change', function() {
+            const hasFile = fileInput.files.length > 0;
+            if (this.value !== "" && hasFile) {
+                uploadButton.disabled = false;
+            } else {
+                uploadButton.disabled = true;
+            }
+        });
+    }
+
+    // 表单提交
+    uploadForm.addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const file = fileInput.files[0];
+        const accountSelect = document.getElementById('upload-account');
+        const accountIndex = accountSelect ? accountSelect.value : "";
+        
+        if (!file) {
+            showNotification('请选择要上传的图片', 'error');
+            return;
+        }
+        
+        if (accountIndex === "") {
+            showNotification('请选择上传账号', 'error');
+            return;
+        }
+
+        uploadImage(file, accountIndex);
+    });
+
+    function uploadImage(file, accountIndex) {
+        const formData = new FormData();
+        formData.append('file_up', file);
+        formData.append('account_index', accountIndex);
+
+        // 显示上传进度
+        document.getElementById('upload-progress').classList.remove('hidden');
+        document.getElementById('upload-button').disabled = true;
+        document.getElementById('progress-bar').style.width = '0%';
+        document.getElementById('progress-text').textContent = '准备上传... 0%';
+
+        const xhr = new XMLHttpRequest();
+        
+        // 监听上传进度
+        xhr.upload.addEventListener('progress', function(e) {
+            if (e.lengthComputable) {
+                const percentComplete = Math.round((e.loaded / e.total) * 100);
+                document.getElementById('progress-bar').style.width = percentComplete + '%';
+                document.getElementById('progress-text').textContent = `上传中... ${percentComplete}%`;
+            }
+        });
+        
+        // 监听加载完成
+        xhr.addEventListener('load', function() {
+            if (xhr.status === 200) {
+                try {
+                    const response = JSON.parse(xhr.responseText);
+                    
+                    if (response.code === 0) {
+                        document.getElementById('progress-bar').style.width = '100%';
+                        document.getElementById('progress-text').textContent = '上传完成';
+                        
+                        setTimeout(() => {
+                            showLayuiAlert('图片上传成功', 'success');
+                            
+                            // 重置表单
+                            resetFileSelection();
+                            document.getElementById('upload-progress').classList.add('hidden');
+                            
+                            // 重新加载图片列表
+                            loadImages();
+                        }, 500);
+                    } else {
+                        handleUploadError(`上传失败: ${response.message || '未知错误'}`);
+                    }
+                } catch (e) {
+                    handleUploadError('上传失败: 响应解析错误');
+                }
+            } else {
+                handleUploadError(`上传失败: HTTP ${xhr.status}`);
+            }
+        });
+
+        // 监听错误
+        xhr.addEventListener('error', function() {
+            handleUploadError('上传失败: 网络错误');
+        });
+
+        // 监听中止
+        xhr.addEventListener('abort', function() {
+            handleUploadError('上传已取消', 'warning');
+        });
+
+        // 打开连接并发送
+        xhr.open('POST', '/api/upload_bfs');
+        xhr.send(formData);
+        
+        // 添加取消按钮
+        addCancelButton(xhr);
+    }
+    
+    function handleUploadError(message, type = 'error') {
+        document.getElementById('progress-bar').style.width = '100%';
+        document.getElementById('progress-bar').classList.add('bg-red-600');
+        document.getElementById('progress-text').textContent = '上传失败';
+        showLayuiAlert(message, type);
+        document.getElementById('upload-button').disabled = false;
+        
+        // 移除取消按钮
+        const cancelBtn = document.getElementById('cancel-upload-btn');
+        if (cancelBtn) {
+            cancelBtn.remove();
+        }
+    }
+    
+    function resetUploadForm() {
+        uploadForm.reset();
+        resetFileSelection();
+        uploadProgress.classList.add('hidden');
+        uploadButton.disabled = true;
+        
+        // 移除取消按钮
+        const cancelBtn = document.getElementById('cancel-upload-btn');
+        if (cancelBtn) {
+            cancelBtn.remove();
+        }
+    }
+    
+    // 添加上传取消功能
+    function addCancelButton(xhr) {
+        // 移除现有的取消按钮
+        const existingCancelBtn = document.getElementById('cancel-upload-btn');
+        if (existingCancelBtn) {
+            existingCancelBtn.remove();
+        }
+        
+        // 创建取消按钮
+        const cancelBtn = document.createElement('button');
+        cancelBtn.id = 'cancel-upload-btn';
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'px-4 py-3 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-all duration-200 shadow-sm hover:shadow-md';
+        cancelBtn.innerHTML = '<i class="fa fa-times"></i>';
+        
+        cancelBtn.addEventListener('click', function() {
+            if (xhr) {
+                xhr.abort();
+            }
+        });
+        
+        // 插入取消按钮
+        document.getElementById('upload-button').parentNode.appendChild(cancelBtn);
+        
+        // 上传完成后移除取消按钮
+        xhr.addEventListener('loadend', function() {
+            setTimeout(() => {
+                if (cancelBtn.parentNode) {
+                    cancelBtn.remove();
+                }
+            }, 1000);
+        });
+    }
+});
+
+// 加载图片列表
+function loadImages() {
+    fetch('/api/get_images')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                updateImagesList(data.images);
+            } else {
+                showLayuiAlert(data.message || '加载图片失败', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('加载图片列表失败:', error);
+            showLayuiAlert('加载图片列表失败', 'error');
+        });
+}
+
+function updateImagesList(images) {
+    const container = document.getElementById('images-list');
+    const emptyMessage = document.getElementById('empty-images');
+    const imagesCount = document.getElementById('images-count');
+    
+    if (!container) return;
+    
+    imagesCount.textContent = images ? images.length : 0;
+    
+    if (!images || images.length === 0) {
+        container.classList.add('hidden');
+        emptyMessage.classList.remove('hidden');
+        return;
+    }
+    
+    container.classList.remove('hidden');
+    emptyMessage.classList.add('hidden');
+    
+    container.innerHTML = images.map((image, index) => `
+        <div class="group relative bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-all duration-200">
+            <div class="aspect-square bg-gray-100 overflow-hidden">
+                <img src="${image.url}" 
+                     alt="${image.name || '图片'}" 
+                     class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 cursor-pointer"
+                     onclick="previewImage(${JSON.stringify(image).replace(/"/g, '&quot;')})"
+                     loading="lazy"
+                     onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjNmNGY2Ii8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzljYTNkYiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPuWbvueJh+WKoOi9veWksei0pTwvdGV4dD48L3N2Zz4='" referrerpolicy="no-referrer">
+            </div>
+            
+            <div class="p-3">
+                <p class="text-sm font-medium text-gray-800 truncate" title="${image.name || '未命名'}">
+                    ${image.name || '未命名'}
+                </p>
+                <p class="text-xs text-gray-500 mt-1 truncate">
+                    ${image.upload_account || '未知用户'}
+                </p>
+                <p class="text-xs text-gray-400 mt-1">
+                    ${image.upload_time || ''}
+                </p>
+            </div>
+            
+            <!-- 悬停操作按钮 -->
+            <div class="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center opacity-0 group-hover:opacity-100">
+                <div class="flex space-x-2">
+                    <button onclick="copyImageUrl('${image.url}')" 
+                            class="p-2 bg-white rounded-full shadow-lg hover:bg-gray-50 transition transform hover:scale-110"
+                            title="复制URL">
+                        <i class="fa fa-copy text-gray-700 text-sm"></i>
+                    </button>
+                    <button onclick="previewImage(${JSON.stringify(image).replace(/"/g, '&quot;')})" 
+                            class="p-2 bg-white rounded-full shadow-lg hover:bg-gray-50 transition transform hover:scale-110"
+                            title="预览">
+                        <i class="fa fa-eye text-blue-600 text-sm"></i>
+                    </button>
+                    <button onclick="deleteImage('${image.url}')" 
+                            class="p-2 bg-white rounded-full shadow-lg hover:bg-gray-50 transition transform hover:scale-110"
+                            title="删除">
+                        <i class="fa fa-trash text-red-600 text-sm"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function showLayuiAlert(message, type = 'info') {
+    layui.use('layer', function(){
+        const layer = layui.layer;
+        const icon = type === 'success' ? 1 : 
+                    type === 'error' ? 2 : 
+                    type === 'warning' ? 3 : 0;
+        
+        layer.msg(message, { icon: icon });
+    });
+}
+
+function initImageBed() {
+    initLayuiForm();
+    initializeImageUpload();
+    loadImages();
+}
+
+// 右键菜单功能
+function showImageContextMenu(event, imageUrl) {
+    event.preventDefault();
+    
+    // 移除现有的右键菜单
+    const existingMenu = document.getElementById('image-context-menu');
+    if (existingMenu) {
+        existingMenu.remove();
+    }
+    
+    // 创建右键菜单
+    const contextMenu = document.createElement('div');
+    contextMenu.id = 'image-context-menu';
+    contextMenu.className = 'fixed bg-white shadow-lg rounded-lg py-2 z-50 border border-gray-200';
+    contextMenu.style.left = event.pageX + 'px';
+    contextMenu.style.top = event.pageY + 'px';
+    
+    contextMenu.innerHTML = `
+        <button onclick="copyImageUrl('${imageUrl}'); hideContextMenu()" 
+                class="w-full px-4 py-2 text-left hover:bg-gray-100 flex items-center">
+            <i class="fa fa-copy mr-2 text-blue-600"></i>复制URL
+        </button>
+        <hr class="my-1">
+        <button onclick="deleteImage('${imageUrl}'); hideContextMenu()" 
+                class="w-full px-4 py-2 text-left hover:bg-gray-100 flex items-center text-red-600">
+            <i class="fa fa-trash mr-2"></i>删除图片
+        </button>
+    `;
+    
+    document.body.appendChild(contextMenu);
+    
+    // 点击其他地方隐藏菜单
+    setTimeout(() => {
+        document.addEventListener('click', hideContextMenu, { once: true });
+    }, 100);
+}
+
+function hideContextMenu() {
+    const contextMenu = document.getElementById('image-context-menu');
+    if (contextMenu) {
+        contextMenu.remove();
+    }
+}
+
+async function copyImageUrl(url) {
+    const imageTag = `[bili_image:${url}]`;
+    try {
+        await navigator.clipboard.writeText(imageTag);
+        showLayuiAlert('图片URL已复制到剪贴板', 'success');
+    } catch (err) {
+        console.error('复制失败:', err);
+        showLayuiAlert('复制失败，请手动复制', 'error');
+    }
+}
+
+// 图片上传功能优化
+function initializeImageUpload() {
+    const uploadForm = document.getElementById('upload-image-form');
+    const fileInput = document.getElementById('image-file');
+    const uploadArea = document.getElementById('upload-area');
+    
+    // 拖拽上传事件
+    ['dragover', 'dragenter'].forEach(event => {
+        uploadArea.addEventListener(event, (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('border-blue-400', 'bg-blue-50');
+        });
+    });
+
+    ['dragleave', 'dragend'].forEach(event => {
+        uploadArea.addEventListener(event, (e) => {
+            e.preventDefault();
+            if (!uploadArea.contains(e.relatedTarget)) {
+                uploadArea.classList.remove('border-blue-400', 'bg-blue-50');
+            }
+        });
+    });
+
+    uploadArea.addEventListener('drop', (e) => {
+        e.preventDefault();
+        uploadArea.classList.remove('border-blue-400', 'bg-blue-50');
+        const files = e.dataTransfer.files;
+        if (files.length > 0) {
+            handleFileSelect(files[0]);
+            const dataTransfer = new DataTransfer();
+            dataTransfer.items.add(files[0]);
+            fileInput.files = dataTransfer.files;
+        }
+    });
+
+    // 点击上传
+    uploadArea.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+        if (fileInput.files.length > 0) {
+            handleFileSelect(fileInput.files[0]);
+        } else {
+            resetFileSelection();
+        }
+    });
+
+    // 表单提交
+    uploadForm.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const file = fileInput.files[0];
+        const accountIndex = document.getElementById('upload-account').value;
+        
+        if (!file) {
+            showLayuiAlert('请选择要上传的图片', 'warning');
+            return;
+        }
+        
+        if (!accountIndex) {
+            showLayuiAlert('请选择上传账号', 'warning');
+            return;
+        }
+
+        uploadImage(file, accountIndex);
+    });
+}
+
+function handleFileSelect(file) {
+    if (!file) return;
+
+    // 文件类型检查
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+    if (!file.type.startsWith('image/') || !allowedTypes.includes(file.type.toLowerCase())) {
+        showLayuiAlert('请选择有效的图片文件（JPG、PNG、GIF、WebP）', 'error');
+        return;
+    }
+
+    // 文件大小检查
+    const maxSize = 10 * 1024 * 1024;
+    if (file.size > maxSize) {
+        showLayuiAlert('图片大小不能超过10MB', 'error');
+        return;
+    }
+
+    if (file.size === 0) {
+        showLayuiAlert('文件为空，请选择有效的图片文件', 'error');
+        return;
+    }
+
+    // 显示文件信息
+    document.getElementById('file-name').textContent = file.name;
+    document.getElementById('file-size').textContent = formatFileSize(file.size);
+    document.getElementById('file-info').classList.remove('hidden');
+    
+    // 检查账号选择
+    const accountSelect = document.getElementById('upload-account');
+    if (accountSelect && accountSelect.value) {
+        document.getElementById('upload-button').disabled = false;
+    }
+}
+
+// 重置文件选择
+function resetFileSelection() {
+    document.getElementById('file-info').classList.add('hidden');
+    document.getElementById('upload-button').disabled = true;
+    document.getElementById('image-file').value = '';
+    document.getElementById('upload-area').classList.remove('border-blue-400', 'bg-blue-50');
+}
+
+// 处理文件选择
+function handleFileSelect(file) {
+    if (!file) return;
+
+    // 文件类型检查
+    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+    if (!file.type.startsWith('image/') || !allowedTypes.includes(file.type.toLowerCase())) {
+        showNotification('请选择有效的图片文件（JPG、PNG、GIF、WebP）', 'error');
+        return;
+    }
+
+    // 文件大小检查
+    const maxSize = 10 * 1024 * 1024;
+    if (file.size > maxSize) {
+        showNotification('图片大小不能超过10MB', 'error');
+        return;
+    }
+
+    if (file.size === 0) {
+        showNotification('文件为空，请选择有效的图片文件', 'error');
+        return;
+    }
+
+    // 显示文件信息
+    document.getElementById('file-name').textContent = file.name;
+    document.getElementById('file-size').textContent = formatFileSize(file.size);
+    document.getElementById('file-info').classList.remove('hidden');
+    
+    // 检查账号选择
+    const accountSelect = document.getElementById('upload-account');
+    if (accountSelect && accountSelect.value) {
+        document.getElementById('upload-button').disabled = false;
+    }
+}
+
+// 格式化文件大小
+function formatFileSize(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// 更新图片列表显示
+function updateImagesList(images) {
+    const container = document.getElementById('images-list');
+    const emptyMessage = document.getElementById('empty-images');
+    const imagesCount = document.getElementById('images-count');
+    
+    if (!container) return;
+    
+    imagesCount.textContent = images ? images.length : 0;
+    
+    if (!images || images.length === 0) {
+        container.classList.add('hidden');
+        emptyMessage.classList.remove('hidden');
+        return;
+    }
+    
+    container.classList.remove('hidden');
+    emptyMessage.classList.add('hidden');
+    
+    container.innerHTML = images.map((image, index) => `
+        <div class="group relative bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-all duration-200">
+            <div class="aspect-square bg-gray-100 overflow-hidden">
+                <img src="${image.url}" 
+                     alt="${image.name || '图片'}" 
+                     class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 cursor-pointer"
+                     onclick="previewImage('${image.url}')"
+                     loading="lazy"
+                     onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjNmNGY2Ii8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzljYTNkYiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPuWbvueJh+WKoOi9veWksei0pTwvdGV4dD48L3N2Zz4='" referrerpolicy="no-referrer">
+            </div>
+            
+            <div class="p-3">
+                <p class="text-sm font-medium text-gray-800 truncate" title="${image.name || '未命名'}">
+                    ${image.name || '未命名'}
+                </p>
+                <p class="text-xs text-gray-500 mt-1 truncate">
+                    ${image.upload_account || '未知用户'}
+                </p>
+                <p class="text-xs text-gray-400 mt-1">
+                    ${image.upload_time || ''}
+                </p>
+            </div>
+            
+            <!-- 悬停操作按钮 -->
+            <div class="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center opacity-0 group-hover:opacity-100">
+                <div class="flex space-x-2">
+                    <button onclick="copyImageUrl('${image.url}')" 
+                            class="p-2 bg-white rounded-full shadow-lg hover:bg-gray-50 transition transform hover:scale-110"
+                            title="复制URL">
+                        <i class="fa fa-copy text-gray-700 text-sm"></i>
+                    </button>
+                    <button onclick="previewImage('${image.url}')" 
+                            class="p-2 bg-white rounded-full shadow-lg hover:bg-gray-50 transition transform hover:scale-110"
+                            title="预览">
+                        <i class="fa fa-eye text-blue-600 text-sm"></i>
+                    </button>
+                    <button onclick="deleteImage('${image.url}')" 
+                            class="p-2 bg-white rounded-full shadow-lg hover:bg-gray-50 transition transform hover:scale-110"
+                            title="删除">
+                        <i class="fa fa-trash text-red-600 text-sm"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+// 图片预览功能
+function previewImage(image) {
+    currentPreviewUrl = image.url;
+    document.getElementById('preview-image').src = image;
+    document.getElementById('preview-title').textContent = image.name || '图片预览';
+    document.getElementById('image-preview-modal').classList.remove('hidden');
+}
+
+function deleteImage(url) {
+    layui.use('layer', function(){
+        const layer = layui.layer;
+        
+        layer.confirm('确定要删除这张图片吗？此操作不可恢复！', {
+            icon: 3,
+            title: '确认删除'
+        }, function(index){
+            fetch('/api/delete_image', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image_url: url })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    showLayuiAlert('图片删除成功', 'success');
+                    loadImages();
+                    closePreviewModal();
+                } else {
+                    showLayuiAlert(data.message || '删除失败', 'error');
+                }
+            })
+            .catch(error => {
+                console.error('删除图片失败:', error);
+                showLayuiAlert('删除图片失败，请检查网络连接', 'error');
+            });
+            
+            layer.close(index);
+        });
+    });
+}
+
+function previewImage(image) {
+    currentPreviewUrl = image.url;
+    document.getElementById('preview-image').src = image;
+    document.getElementById('preview-title').textContent = image.name || '图片预览';
+    document.getElementById('image-preview-modal').classList.remove('hidden');
+}
+
+function closePreviewModal() {
+    document.getElementById('image-preview-modal').classList.add('hidden');
+    currentPreviewUrl = '';
+}
+
+// 回退复制方法
+function fallbackCopyTextToClipboard(text) {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    
+    // 避免滚动到底部
+    textArea.style.top = '0';
+    textArea.style.left = '0';
+    textArea.style.position = 'fixed';
+    
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+    
+    try {
+        const successful = document.execCommand('copy');
+        if (successful) {
+            showNotification('日志内容已复制到剪贴板', 'success');
+        } else {
+            showNotification('复制失败，请手动复制', 'error');
+        }
+    } catch (err) {
+        console.error('回退复制也失败:', err);
+        showNotification('复制失败，请手动复制', 'error');
+    }
+    
+    document.body.removeChild(textArea);
 }
 
 // 滚动到日志顶部
@@ -2421,23 +3750,57 @@ function fetchLogs() {
 
 // 清除所有日志
 function clearAllLogs() {
-    if (confirm('确定要清空所有日志吗？此操作不可恢复！')) {
-        fetch('/api/clear_logs', { method: 'POST' })
-            .then(response => response.json())
-            .then(data => {
-                showNotification(data.message, data.success ? 'success' : 'error');
-                if (data.success) {
-                    // 清空当前日志显示
-                    currentLogs = [];
-                    renderLogs();
-                }
-            })
-            .catch(error => {
-                console.error('清除日志失败:', error);
-                showNotification('清除日志失败，请检查网络连接', 'error');
-            });
-    }
+    layer.confirm('确定要清空所有日志吗？此操作不可恢复！', {
+            icon: 3,
+            title: '确认删除'
+        }, function(index) {
+            fetch('/api/clear_logs', { method: 'POST' })
+                .then(response => response.json())
+                .then(data => {
+                    showNotification(data.message, data.success ? 'success' : 'error');
+                    if (data.success) {
+                        // 清空当前日志显示
+                        currentLogs = [];
+                        renderLogs();
+                    }
+                })
+                .catch(error => {
+                    console.error('清除日志失败:', error);
+                    showNotification('清除日志失败，请检查网络连接', 'error');
+                });
+            layer.close(index);
+        })
 }
+
+document.addEventListener('DOMContentLoaded', function() {
+    // 编辑账号模态框
+    const editAutoReplyFollowCheckbox = document.getElementById('edit-account-auto-reply-follow');
+    const editFollowReplyContainer = document.getElementById('follow-reply-container');
+    
+    if (editAutoReplyFollowCheckbox && editFollowReplyContainer) {
+        editAutoReplyFollowCheckbox.addEventListener('change', function() {
+            if (this.checked) {
+                editFollowReplyContainer.classList.remove('hidden');
+            } else {
+                editFollowReplyContainer.classList.add('hidden');
+            }
+        });
+    }
+
+    // 添加账号模态框
+    const addAutoReplyFollowCheckbox = document.getElementById('add-account-auto-reply-follow');
+    const addFollowReplyContainer = document.getElementById('add-follow-reply-container');
+    
+    if (addAutoReplyFollowCheckbox && addFollowReplyContainer) {
+        addAutoReplyFollowCheckbox.addEventListener('change', function() {
+            if (this.checked) {
+                addFollowReplyContainer.classList.remove('hidden');
+            } else {
+                addFollowReplyContainer.classList.add('hidden');
+            }
+        });
+    }
+});
 
 // 多账号管理功能
 function showAddAccountModal() {
@@ -2450,6 +3813,10 @@ function showAddAccountModal() {
     document.getElementById('start-qrcode-login').classList.remove('hidden');
     
     document.getElementById('add-account-modal').classList.remove('hidden');
+
+    document.getElementById('add-account-auto-reply-follow').checked = false;
+    document.getElementById('add-account-follow-reply-message').value = '感谢关注！';
+    document.getElementById('add-follow-reply-container').classList.add('hidden');
 }
 
 function hideAddAccountModal() {
@@ -2659,9 +4026,11 @@ function updateAccountsList(accounts) {
                 <h5 class="text-sm font-medium text-gray-700 mb-2">账号关键词:</h5>
                 <div class="space-y-1">
                     ${Object.entries(account.keyword).map(([keyword, reply]) => `
-                        <div class="flex justify-between text-sm">
-                            <span class="text-gray-800">${keyword}</span>
-                            <span class="text-gray-600">→ ${reply}</span>
+                        <div class="flex items-center justify-between p-3 border border-gray-200 rounded-lg bg-white">
+                            <div class="flex-1">
+                                <div class="font-medium text-gray-800">${keyword}</div>
+                                <div class="text-sm text-gray-600">${reply}</div>
+                            </div>
                         </div>
                     `).join('')}
                 </div>
@@ -2751,6 +4120,17 @@ function editAccount(index) {
                 
                 // 更新关键词列表
                 updateAccountKeywordsList(account.keyword || {});
+
+                document.getElementById('edit-account-auto-reply-follow').checked = account.auto_reply_follow || false;
+                document.getElementById('edit-account-follow-reply-message').value = account.follow_reply_message || '感谢关注！';
+                
+                // 根据开关状态显示/隐藏消息输入框
+                const followReplyContainer = document.getElementById('follow-reply-container');
+                if (account.auto_reply_follow) {
+                    followReplyContainer.classList.remove('hidden');
+                } else {
+                    followReplyContainer.classList.add('hidden');
+                }
                 
                 // 显示模态框
                 document.getElementById('edit-account-modal').classList.remove('hidden');
@@ -2843,7 +4223,10 @@ function deleteAccountKeyword(keyword) {
         return;
     }
     
-    if (confirm(`确定要删除关键词 "${keyword}" 吗？`)) {
+    layer.confirm(`确定要删除关键词 "${keyword}" 吗？`, {
+        icon: 3,
+        title: '确认删除'
+    }, function(index) {
         fetch(`/api/delete_account_keyword/${currentEditingAccountIndex}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -2868,11 +4251,15 @@ function deleteAccountKeyword(keyword) {
             console.error('删除关键词失败:', error);
             showNotification('删除关键词失败，请检查网络连接', 'error');
         });
-    }
+        layer.close(index);
+    })
 }
 
 function deleteAccount(index) {
-    if (confirm('确定要删除这个账号吗？此操作不可恢复！')) {
+    layer.confirm('确定要删除这个账号吗？此操作不可恢复！', {
+        icon: 3,
+        title: '确认删除'
+    }, function(index1) {
         fetch(`/api/delete_account/${index}`, { method: 'POST' })
             .then(response => response.json())
             .then(data => {
@@ -2886,11 +4273,15 @@ function deleteAccount(index) {
                 console.error('删除账号失败:', error);
                 showNotification('删除失败，请检查网络连接', 'error');
             });
-    }
+        layer.close(index1);
+    })
 }
 
 function deleteGlobalKeyword(keyword) {
-    if (confirm(`确定要删除全局关键词 "${keyword}" 吗？`)) {
+    layer.confirm(`确定要删除全局关键词 "${keyword}" 吗？`, {
+        icon: 3,
+        title: '确认删除'
+    }, function(index) {
         fetch('/api/get_accounts')
             .then(response => response.json())
             .then(data => {
@@ -2915,7 +4306,8 @@ function deleteGlobalKeyword(keyword) {
                 console.error('删除全局关键词失败:', error);
                 showNotification('删除失败，请检查网络连接', 'error');
             });
-    }
+        layer.close(index);
+    })
 }
 
 function showGlobalKeywordModal() {
@@ -3074,6 +4466,8 @@ if (addAccountForm) {
             enabled: formData.get('enabled') === 'on',
             at_user: formData.get('at_user') === 'on',
             auto_focus: formData.get('auto_focus') === 'on',
+            auto_reply_follow: formData.get('auto_reply_follow') === 'on',  // 新增
+            follow_reply_message: formData.get('follow_reply_message') || '感谢关注！',  // 新增
             keywords: {}
         };
         
@@ -3115,7 +4509,9 @@ if (editAccountForm) {
             device_id: formData.get('device_id'),
             enabled: formData.get('enabled') === 'on',
             at_user: formData.get('at_user') === 'on',
-            auto_focus: formData.get('auto_focus') === 'on'
+            auto_focus: formData.get('auto_focus') === 'on',
+            auto_reply_follow: formData.get('auto_reply_follow') === 'on',  // 新增
+            follow_reply_message: formData.get('follow_reply_message') || '感谢关注！'  // 新增
         };
         
         fetch(`/api/update_account/${accountIndex}`, {
@@ -3466,6 +4862,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     updateSystemStats();
     setInterval(updateSystemStats, 2000);
+    initImageBed();
 });
 </script>
 {% endblock %}''')
