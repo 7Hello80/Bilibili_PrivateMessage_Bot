@@ -20,16 +20,20 @@ from colorama import Fore, Back, Style
 import distro
 import mimetypes
 import bili_ticket
+from plugin_loader import plugin_loader
+from plugin_manage import plugin_manager
+from plugin_dev import PluginDeveloper
+from plugin_create import plugin_creator
 
 # 导入现有的配置管理
 import ConfigManage
 
-CURRENT_VERSION = "MS4wLjc="
+CURRENT_VERSION = "MS4wLjg="
 UPDATE_CHECK_URL = "aHR0cDovLzExNC4xMzQuMTg4LjE4OD9pZD0x"
-Version = "2.0.2"
+Version = "2.0.3"
 system_name = platform.system()
 system_version = platform.version()
-disk_default = "/mnt"
+disk_default = "/"
 
 if system_name == "Linux":
     #获取linux发行版名称
@@ -909,6 +913,156 @@ def stop_bot():
         log_handler.add_log(f"机器人停止失败: {str(e)}", "ERROR")
         return jsonify({'success': False, 'message': f'停止失败: {str(e)}'})
 
+@app.route('/api/plugins/search')
+@login_required
+def search_plugins():
+    """搜索插件"""
+    try:
+        keyword = request.args.get('keyword', '')
+        plugins = plugin_manager.search_plugins(keyword)
+        return jsonify({'success': True, 'plugins': plugins})
+    except Exception as e:
+        log_handler.add_log(f"搜索插件失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'搜索失败: {str(e)}'})
+
+@app.route('/api/plugins/lists')
+@login_required
+def plugins_list():
+    try:
+        plugins = plugin_manager.search_plugins()
+        return jsonify({'success': True, 'plugins': plugins})
+    except Exception as e:
+        log_handler.add_log(f"获取插件失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'获取失败: {str(e)}'})
+
+@app.route('/api/plugins/install', methods=['POST'])
+@login_required
+def install_plugin():
+    """安装插件"""
+    try:
+        data = request.json
+        repo_full_name = data.get('repo_full_name')
+        plugin_name = data.get('plugin_name')
+
+        result = plugin_manager.download_plugin(repo_full_name, plugin_name)
+        
+        if result:
+            # 加载新插件
+            plugin_loader.load_plugin(plugin_name)
+            log_handler.add_log(f"安装插件: {plugin_name}")
+            return jsonify({'success': True, 'message': '插件安装成功'})
+        else:
+            return jsonify({'success': False, 'message': '插件安装失败'})
+    
+    except Exception as e:
+        log_handler.add_log(f"安装插件失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'安装失败: {str(e)}'})
+
+@app.route('/api/plugins/uninstall', methods=['POST'])
+@login_required
+def uninstall_plugin():
+    """卸载插件"""
+    try:
+        plugin_name = request.json.get('plugin_name')
+        if plugin_manager.delete_plugin(plugin_name):
+            log_handler.add_log(f"卸载插件: {plugin_name}")
+            return jsonify({'success': True, 'message': '插件卸载成功'})
+        else:
+            return jsonify({'success': False, 'message': '插件卸载失败'})
+    
+    except Exception as e:
+        log_handler.add_log(f"卸载插件失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'卸载失败: {str(e)}'})
+
+@app.route('/api/plugins/list')
+@login_required
+def list_plugins():
+    """获取已安装插件列表"""
+    try:
+        plugins = plugin_manager.get_installed_plugins()
+        return jsonify({'success': True, 'plugins': plugins})
+    except Exception as e:
+        log_handler.add_log(f"获取插件列表失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'获取失败: {str(e)}'})
+
+@app.route('/api/plugins/toggle', methods=['POST'])
+@login_required
+def toggle_plugin():
+    """启用/禁用插件"""
+    try:
+        data = request.json
+        plugin_name = data.get('plugin_name')
+        enabled = data.get('enabled')
+        
+        if not plugin_name:
+            return jsonify({'success': False, 'message': '插件名称不能为空'})
+        
+        if enabled:
+            success = plugin_loader.enable_plugin(plugin_name)
+            action = "启用"
+        else:
+            success = plugin_loader.disable_plugin(plugin_name)
+            action = "禁用"
+        
+        if success:
+            log_handler.add_log(f"{action}插件: {plugin_name}")
+            
+            # 重新加载插件列表以确保状态正确
+            plugin_manager.get_installed_plugins()
+            
+            return jsonify({
+                'success': True, 
+                'message': f'插件已{action}',
+                'enabled': enabled
+            })
+        else:
+            return jsonify({
+                'success': False, 
+                'message': f'{action}插件失败'
+            })
+    
+    except Exception as e:
+        log_handler.add_log(f"切换插件状态失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'操作失败: {str(e)}'})
+
+@app.route('/api/plugins/reload', methods=['POST'])
+@login_required
+def reload_plugin():
+    """重新加载插件"""
+    try:
+        plugin_name = request.json.get('plugin_name')
+        if plugin_loader.reload_plugin(plugin_name):
+            log_handler.add_log(f"重新加载插件: {plugin_name}")
+            return jsonify({'success': True, 'message': '插件重新加载成功'})
+        else:
+            return jsonify({'success': False, 'message': '插件重新加载失败'})
+    
+    except Exception as e:
+        log_handler.add_log(f"重新加载插件失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'重新加载失败: {str(e)}'})
+
+@app.route('/api/plugins/create', methods=['POST'])
+@login_required
+def create_plugin():
+    """创建新插件"""
+    try:
+        data = request.json
+        plugin_name = data.get('name')
+        plugin_type = data.get('type', 'base')
+        author = data.get('author', '匿名')
+        description = data.get('description', '')
+        version = data.get('version', '1.0.0')
+        
+        if plugin_creator.create_plugin(plugin_name, plugin_type, author, description, version):
+            log_handler.add_log(f"创建插件: {plugin_name}")
+            return jsonify({'success': True, 'message': '插件创建成功'})
+        else:
+            return jsonify({'success': False, 'message': '插件创建失败'})
+    
+    except Exception as e:
+        log_handler.add_log(f"创建插件失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'创建失败: {str(e)}'})
+
 # 添加系统监控数据获取函数
 def get_system_stats():
     """获取系统状态信息"""
@@ -928,7 +1082,41 @@ def get_system_stats():
     disk_total = disk.total / (1024 **3)  # 总磁盘空间(GB)
     disk_used = disk.used / (1024** 3)    # 已用磁盘空间(GB)
     disk_percent = disk.percent           # 磁盘使用率
+
+    # 网络IO信息
+    net_io = psutil.net_io_counters()
+    net_bytes_sent = net_io.bytes_sent / (1024 ** 2)  # 发送数据量(MB)
+    net_bytes_recv = net_io.bytes_recv / (1024 ** 2)  # 接收数据量(MB)
+    net_packets_sent = net_io.packets_sent            # 发送包数量
+    net_packets_recv = net_io.packets_recv            # 接收包数量
+    net_errin = net_io.errin                          # 接收错误数
+    net_errout = net_io.errout                        # 发送错误数
+    net_dropin = net_io.dropin                        # 接收丢弃数
+    net_dropout = net_io.dropout 
     
+    # 计算网络速度（需要保存上一次的数据）
+    current_time = time.time()
+    if not hasattr(get_system_stats, 'last_net_io'):
+        # 第一次调用，初始化数据
+        get_system_stats.last_net_io = net_io
+        get_system_stats.last_net_time = current_time
+        sent_speed = 0
+        recv_speed = 0
+    else:
+        # 计算时间差
+        time_diff = current_time - get_system_stats.last_net_time
+        if time_diff > 0:
+            # 计算速度 (KB/s)
+            sent_speed = (net_io.bytes_sent - get_system_stats.last_net_io.bytes_sent) / time_diff / 1024
+            recv_speed = (net_io.bytes_recv - get_system_stats.last_net_io.bytes_recv) / time_diff / 1024
+        else:
+            sent_speed = 0
+            recv_speed = 0
+        
+        # 更新上一次的数据
+        get_system_stats.last_net_io = net_io
+        get_system_stats.last_net_time = current_time
+
     # 系统负载
     load_avg = None
     if platform.system() != 'Windows':
@@ -961,6 +1149,18 @@ def get_system_stats():
             'total': round(disk_total, 2),
             'used': round(disk_used, 2),
             'usage': disk_percent
+        },
+        'network': {
+            'bytes_sent': round(net_bytes_sent, 2),
+            'bytes_recv': round(net_bytes_recv, 2),
+            'packets_sent': net_packets_sent,
+            'packets_recv': net_packets_recv,
+            'errors_in': net_errin,
+            'errors_out': net_errout,
+            'drops_in': net_dropin,
+            'drops_out': net_dropout,
+            'sent_speed': round(sent_speed, 2),  # 上传速度 KB/s
+            'recv_speed': round(recv_speed, 2)   # 下载速度 KB/s
         },
         'load_avg': load_avg,
         'system': system_info,
@@ -1178,9 +1378,8 @@ def create_templates():
     <link href="//unpkg.com/layui@2.12.1/dist/css/layui.css" rel="stylesheet">
     <!-- 引入 layui.js -->
     <script src="//unpkg.com/layui@2.12.1/dist/layui.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-        
         .gradient-bg {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
         }
@@ -1318,6 +1517,29 @@ def create_templates():
             transform: translateY(-2px);
             box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
         }
+        
+        /* 网络IO图表样式 */
+        .network-stats-card {
+            transition: all 0.3s ease;
+        }
+
+        .network-stats-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+        }
+
+        .network-speed-indicator {
+            font-size: 1.125rem;
+            font-weight: 700;
+        }
+
+        .network-speed-indicator.sent {
+            color: #ef4444;
+        }
+
+        .network-speed-indicator.recv {
+            color: #10b981;
+        }
     </style>
 </head>
 <body class="bg-gray-50 font-sans">
@@ -1427,6 +1649,10 @@ def create_templates():
                 <i class="fa fa-users text-gray-400 w-5"></i>
                 <span>多账号管理</span>
             </a>
+            <a href="#plugins" onclick="showSection('plugins')" class="nav-item flex items-center space-x-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-lg transition">
+                <i class="fa fa-puzzle-piece text-gray-400 w-5"></i>
+                <span>插件商店</span>
+            </a>
             <a href="#logs" onclick="showSection('logs')" class="nav-item flex items-center space-x-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-lg transition">
                 <i class="fa fa-terminal text-gray-400 w-5"></i>
                 <span>运行日志</span>
@@ -1459,6 +1685,68 @@ def create_templates():
 
     <!-- 主内容区 -->
     <div class="flex-1 overflow-auto lg:ml-0">
+        <div id="plugins" class="section p-4 lg:p-6" style="display: none;">
+            <div class="mb-6">
+                <div class="flex items-center">
+                    <button class="mobile-menu-button lg:hidden mr-3 p-2 rounded-lg bg-gray-100 text-gray-600 hover:bg-gray-200 transition">
+                        <i class="fa fa-bars"></i>
+                    </button>
+                    <div>
+                        <h2 class="text-2xl lg:text-3xl font-bold text-gray-800">插件商店</h2>
+                        <p class="text-gray-600 mt-2">管理和扩展机器人功能</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 搜索和操作栏 -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
+                <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
+                    <div class="flex-1 lg:max-w-md">
+                        <div class="relative">
+                            <input type="text" id="plugin-search" 
+                                class="w-full px-4 py-3 pl-10 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
+                                placeholder="搜索插件...">
+                            <i class="fa fa-search absolute left-3 top-3 text-gray-400"></i>
+                        </div>
+                    </div>
+                    <div class="flex space-x-3">
+                        <button onclick="showCreatePluginModal()" 
+                                class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 transition flex items-center">
+                            <i class="fa fa-plus mr-2"></i>创建插件
+                        </button>
+                        <button onclick="loadInstalledPlugins(); getPluginList()" 
+                                class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition flex items-center">
+                            <i class="fa fa-refresh mr-2"></i>刷新
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 已安装插件 -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 mb-6">
+                <div class="px-6 py-4 border-b border-gray-200">
+                    <h3 class="text-lg font-medium text-gray-800">已安装插件</h3>
+                </div>
+                <div id="installed-plugins-list" class="p-6">
+                    <div class="text-center text-gray-500 py-8">
+                        <i class="fa fa-spinner fa-spin text-2xl mb-2"></i>
+                        <p>加载中...</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 在线插件 -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100">
+                <div class="px-6 py-4 border-b border-gray-200">
+                    <h3 class="text-lg font-medium text-gray-800">插件市场</h3>
+                </div>
+                <div id="online-plugins-list" class="p-6">
+                    <div class="text-center text-gray-500 py-8">
+                        <p>在搜索框中输入关键词搜索插件</p>
+                    </div>
+                </div>
+            </div>
+        </div>
         <!-- 控制台 -->
         <div id="dashboard" class="section active p-4 lg:p-6">
             <div class="mb-6">
@@ -1525,83 +1813,128 @@ def create_templates():
                 </div>
             </div>
 
-                            <!-- 系统监控卡片 -->
-                <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
-                    <h3 class="text-lg font-medium text-gray-800 mb-4">系统资源监控</h3>
-                    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <!-- CPU使用率 -->
-                        <div class="flex flex-col items-center">
-                            <div class="relative w-36 h-36 mb-2">
-                                <!-- 圆形进度条背景 -->
-                                <svg class="w-full h-full" viewBox="0 0 100 100">
-                                    <circle cx="50" cy="50" r="45" fill="none" stroke="#f3f4f6" stroke-width="10"/>
-                                    <!-- 进度条将通过JS更新 -->
-                                    <circle id="cpu-progress" cx="50" cy="50" r="45" fill="none" stroke="#3b82f6" stroke-width="10" 
+            <!-- 系统监控卡片 -->
+            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
+                <h3 class="text-lg font-medium text-gray-800 mb-4">系统资源监控</h3>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <!-- CPU使用率 -->
+                    <div class="flex flex-col items-center">
+                        <div class="relative w-36 h-36 mb-2">
+                            <!-- 圆形进度条背景 -->
+                            <svg class="w-full h-full" viewBox="0 0 100 100">
+                                <circle cx="50" cy="50" r="45" fill="none" stroke="#f3f4f6" stroke-width="10"/>
+                                <!-- 进度条将通过JS更新 -->
+                                <circle id="cpu-progress" cx="50" cy="50" r="45" fill="none" stroke="#3b82f6" stroke-width="10" 
                                             stroke-dasharray="283" stroke-dashoffset="283" transform="rotate(-90 50 50)"/>
-                                </svg>
-                                <!-- 百分比文本 -->
-                                <div class="absolute inset-0 flex flex-col items-center justify-center">
-                                    <span id="cpu-usage" class="text-2xl font-bold text-gray-800">0%</span>
-                                    <span class="text-xs text-gray-500">CPU</span>
-                                </div>
+                            </svg>
+                            <!-- 百分比文本 -->
+                            <div class="absolute inset-0 flex flex-col items-center justify-center">
+                                <span id="cpu-usage" class="text-2xl font-bold text-gray-800">0%</span>
+                                <span class="text-xs text-gray-500">CPU</span>
                             </div>
-                            <p class="text-xs text-gray-500">
-                                核心: <span id="cpu-cores">0</span>
-                            </p>
                         </div>
-
-                        <!-- 内存使用率 -->
-                        <div class="flex flex-col items-center">
-                            <div class="relative w-36 h-36 mb-2">
-                                <svg class="w-full h-full" viewBox="0 0 100 100">
-                                    <circle cx="50" cy="50" r="45" fill="none" stroke="#f3f4f6" stroke-width="10"/>
-                                    <circle id="mem-progress" cx="50" cy="50" r="45" fill="none" stroke="#10b981" stroke-width="10" 
-                                            stroke-dasharray="283" stroke-dashoffset="283" transform="rotate(-90 50 50)"/>
-                                </svg>
-                                <div class="absolute inset-0 flex flex-col items-center justify-center">
-                                    <span id="mem-usage" class="text-2xl font-bold text-gray-800">0%</span>
-                                    <span class="text-xs text-gray-500">内存</span>
-                                </div>
-                            </div>
-                            <p id="mem-details" class="text-xs text-gray-500">0/0 GB</p>
-                        </div>
-
-                        <!-- 磁盘使用率 -->
-                        <div class="flex flex-col items-center">
-                            <div class="relative w-36 h-36 mb-2">
-                                <svg class="w-full h-full" viewBox="0 0 100 100">
-                                    <circle cx="50" cy="50" r="45" fill="none" stroke="#f3f4f6" stroke-width="10"/>
-                                    <circle id="disk-progress" cx="50" cy="50" r="45" fill="none" stroke="#8b5cf6" stroke-width="10" 
-                                            stroke-dasharray="283" stroke-dashoffset="283" transform="rotate(-90 50 50)"/>
-                                </svg>
-                                <div class="absolute inset-0 flex flex-col items-center justify-center">
-                                    <span id="disk-usage" class="text-2xl font-bold text-gray-800">0%</span>
-                                    <span class="text-xs text-gray-500">磁盘</span>
-                                </div>
-                            </div>
-                            <p id="disk-details" class="text-xs text-gray-500">0/0 GB</p>
-                        </div>
+                        <p class="text-xs text-gray-500">
+                            核心: <span id="cpu-cores">0</span>
+                        </p>
                     </div>
-                    
-                    <!-- 系统负载 (仅Unix系统) -->
-                    <div id="load-average-container" class="mt-6 pt-4 border-t border-gray-100" style="display: none;">
-                        <h4 class="text-sm font-medium text-gray-700 mb-3">系统负载平均值</h4>
-                        <div class="grid grid-cols-3 gap-3">
-                            <div class="p-3 bg-gray-50 rounded-lg text-center">
-                                <p class="text-xs text-gray-500">1分钟</p>
-                                <p id="load-1" class="text-lg font-bold text-gray-800">0.00</p>
+
+                    <!-- 内存使用率 -->
+                    <div class="flex flex-col items-center">
+                        <div class="relative w-36 h-36 mb-2">
+                            <svg class="w-full h-full" viewBox="0 0 100 100">
+                                <circle cx="50" cy="50" r="45" fill="none" stroke="#f3f4f6" stroke-width="10"/>
+                                <circle id="mem-progress" cx="50" cy="50" r="45" fill="none" stroke="#10b981" stroke-width="10" 
+                                            stroke-dasharray="283" stroke-dashoffset="283" transform="rotate(-90 50 50)"/>
+                            </svg>
+                            <div class="absolute inset-0 flex flex-col items-center justify-center">
+                                <span id="mem-usage" class="text-2xl font-bold text-gray-800">0%</span>
+                                <span class="text-xs text-gray-500">内存</span>
                             </div>
-                            <div class="p-3 bg-gray-50 rounded-lg text-center">
-                                <p class="text-xs text-gray-500">5分钟</p>
-                                <p id="load-5" class="text-lg font-bold text-gray-800">0.00</p>
+                        </div>
+                        <p id="mem-details" class="text-xs text-gray-500">0/0 GB</p>
+                    </div>
+
+                    <!-- 磁盘使用率 -->
+                    <div class="flex flex-col items-center">
+                        <div class="relative w-36 h-36 mb-2">
+                            <svg class="w-full h-full" viewBox="0 0 100 100">
+                                <circle cx="50" cy="50" r="45" fill="none" stroke="#f3f4f6" stroke-width="10"/>
+                                <circle id="disk-progress" cx="50" cy="50" r="45" fill="none" stroke="#8b5cf6" stroke-width="10" 
+                                            stroke-dasharray="283" stroke-dashoffset="283" transform="rotate(-90 50 50)"/>
+                            </svg>
+                            <div class="absolute inset-0 flex flex-col items-center justify-center">
+                                <span id="disk-usage" class="text-2xl font-bold text-gray-800">0%</span>
+                                <span class="text-xs text-gray-500">磁盘</span>
                             </div>
-                            <div class="p-3 bg-gray-50 rounded-lg text-center">
-                                <p class="text-xs text-gray-500">15分钟</p>
-                                <p id="load-15" class="text-lg font-bold text-gray-800">0.00</p>
+                        </div>
+                        <p id="disk-details" class="text-xs text-gray-500">0/0 GB</p>
+                    </div>
+                </div>
+
+                <!-- 在磁盘使用率卡片后面添加网络IO监控 -->
+                <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6 mt-6">
+                    <h3 class="text-lg font-medium text-gray-800 mb-4">网络IO监控</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- 网络速度图表 -->
+                        <div>
+                            <h4 class="text-md font-medium text-gray-700 mb-3">实时网络速度 (KB/s)</h4>
+                            <div class="relative">
+                                <canvas id="network-speed-chart" class="w-full h-64"></canvas>
+                            </div>
+                        </div>
+                        
+                        <!-- 网络统计信息 -->
+                        <div>
+                            <h4 class="text-md font-medium text-gray-700 mb-3">网络统计</h4>
+                            <div class="space-y-3">
+                                <div class="flex justify-between items-center p-3 bg-blue-50 rounded-lg">
+                                    <span class="text-sm text-gray-600">上传速度</span>
+                                    <span id="net-sent-speed" class="text-lg font-bold text-blue-600">0 KB/s</span>
+                                </div>
+                                <div class="flex justify-between items-center p-3 bg-green-50 rounded-lg">
+                                    <span class="text-sm text-gray-600">下载速度</span>
+                                    <span id="net-recv-speed" class="text-lg font-bold text-green-600">0 KB/s</span>
+                                </div>
+                                <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                                    <span class="text-sm text-gray-600">总上传</span>
+                                    <span id="net-sent-total" class="text-sm font-medium text-gray-700">0 MB</span>
+                                </div>
+                                <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                                    <span class="text-sm text-gray-600">总下载</span>
+                                    <span id="net-recv-total" class="text-sm font-medium text-gray-700">0 MB</span>
+                                </div>
+                                <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                                    <span class="text-sm text-gray-600">数据包错误</span>
+                                    <span id="net-errors" class="text-sm font-medium text-red-600">0</span>
+                                </div>
+                                <div class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                                    <span class="text-sm text-gray-600">数据包丢弃</span>
+                                    <span id="net-drops" class="text-sm font-medium text-orange-600">0</span>
+                                </div>
                             </div>
                         </div>
                     </div>
                 </div>
+                    
+                <!-- 系统负载 (仅Unix系统) -->
+                <div id="load-average-container" class="mt-6 pt-4 border-t border-gray-100" style="display: none;">
+                    <h4 class="text-sm font-medium text-gray-700 mb-3">系统负载平均值</h4>
+                    <div class="grid grid-cols-3 gap-3">
+                        <div class="p-3 bg-gray-50 rounded-lg text-center">
+                            <p class="text-xs text-gray-500">1分钟</p>
+                            <p id="load-1" class="text-lg font-bold text-gray-800">0.00</p>
+                        </div>
+                        <div class="p-3 bg-gray-50 rounded-lg text-center">
+                            <p class="text-xs text-gray-500">5分钟</p>
+                            <p id="load-5" class="text-lg font-bold text-gray-800">0.00</p>
+                        </div>
+                        <div class="p-3 bg-gray-50 rounded-lg text-center">
+                            <p class="text-xs text-gray-500">15分钟</p>
+                            <p id="load-15" class="text-lg font-bold text-gray-800">0.00</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
 
             <!-- 更新提示 -->
             <div id="update-alert" class="hidden bg-blue-50 border border-blue-200 rounded-xl p-4 mb-6">
@@ -2207,6 +2540,15 @@ def create_templates():
                                         <p class="text-sm text-gray-500">极简模块化 Web UI 组件库</p>
                                     </div>
                                 </div>
+                                <div class="flex items-center p-3 rounded-lg border border-gray-100 hover:border-blue-200 hover:bg-blue-50 transition-all duration-200">
+                                    <div class="w-10 h-10 rounded-lg bg-gradient-to-r from-blue-100 to-blue-200 flex items-center justify-center mr-3">
+                                        <i class="fas fa-code text-blue-600"></i>
+                                    </div>
+                                    <div>
+                                        <h3 class="font-semibold text-gray-800">Chart.js</h3>
+                                        <p class="text-sm text-gray-500">应用程序开发者的图表库</p>
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -2568,6 +2910,68 @@ def create_templates():
     </div>
 </div>
 
+<!-- 创建插件模态框 -->
+<div id="create-plugin-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden">
+    <div class="flex items-center justify-center min-h-screen p-4">
+        <div class="bg-white rounded-xl shadow-lg w-full max-w-md">
+            <div class="p-6 border-b border-gray-200">
+                <h3 class="text-xl font-bold text-gray-800">创建新插件</h3>
+            </div>
+            <div class="p-6">
+                <form id="create-plugin-form">
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">插件名称</label>
+                            <input type="text" name="name" required
+                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
+                                   placeholder="例如: my_awesome_plugin">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">插件类型</label>
+                            <select name="type" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition">
+                                <option value="base">基础插件</option>
+                                <option value="message">消息处理</option>
+                                <option value="event">事件处理</option>
+                                <option value="api">API扩展</option>
+                                <option value="analysis">数据分析</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">作者</label>
+                            <input type="text" name="author" required
+                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
+                                   placeholder="您的名字">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">版本</label>
+                            <input type="text" name="version" required
+                                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
+                                   value="1.0.0">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 mb-2">描述</label>
+                            <textarea name="description" 
+                                      class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
+                                      rows="3"
+                                      placeholder="插件功能描述"></textarea>
+                        </div>
+                    </div>
+                    <div class="mt-6 flex justify-end space-x-3">
+                        <button type="button" onclick="hideCreatePluginModal()"
+                                class="px-4 py-2 text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition">
+                            取消
+                        </button>
+                        <button type="submit"
+                                class="px-4 py-2 bg-primary-600 text-white rounded-lg hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-primary-500 transition">
+                            创建插件
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+
 <div id="edit-account-modal-global" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden">
     <div class="flex items-center justify-center min-h-screen p-4">
         <div class="bg-white rounded-xl shadow-lg w-full max-w-4xl max-h-[90vh] overflow-y-auto">
@@ -2612,6 +3016,10 @@ def create_templates():
 
 <script>
 let layuiForm = null;
+// 插件商店功能
+let currentPluginSearchKeyword = '';
+let installedPlugins = [];
+let onlinePlugins = [];
 
 // 初始化 Layui 表单
 function initLayuiForm() {
@@ -2647,6 +3055,420 @@ document.addEventListener('DOMContentLoaded', function() {
                 sidebar.classList.add('-translate-x-full');
                 this.style.display = 'none';
             }
+        });
+    }
+});
+
+// 显示插件商店页面
+function showPluginsSection() {
+    showSection('plugins');
+    loadInstalledPlugins();
+}
+
+// 加载已安装插件
+function loadInstalledPlugins() {
+    fetch('/api/plugins/list')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                installedPlugins = data.plugins;
+                updateInstalledPluginsList();
+            } else {
+                showNotification('加载插件列表失败', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('加载插件列表失败:', error);
+            showNotification('加载插件列表失败', 'error');
+        });
+}
+
+// 更新已安装插件列表
+function updateInstalledPluginsList() {
+    const container = document.getElementById('installed-plugins-list');
+    if (!container) return;
+
+    if (!installedPlugins || installedPlugins.length === 0) {
+        container.innerHTML = `
+            <div class="text-center text-gray-500 py-8">
+                <i class="fa fa-puzzle-piece text-3xl mb-3"></i>
+                <p>暂无安装的插件</p>
+                <p class="text-sm mt-2">在插件市场中搜索并安装插件</p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = installedPlugins.map(plugin => `
+        <div class="border border-gray-200 rounded-lg p-4 mb-4 bg-white hover:bg-gray-50 transition">
+            <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center space-x-3">
+                    <div class="w-3 h-3 rounded-full ${plugin.enabled ? 'bg-green-500' : 'bg-gray-400'}"></div>
+                    <h4 class="text-lg font-medium text-gray-800">${plugin.metadata.name}</h4>
+                    <span class="text-sm px-2 py-1 bg-blue-100 text-blue-800 rounded">v${plugin.metadata.version}</span>
+                    ${plugin.loaded ? '<span class="text-sm px-2 py-1 bg-green-100 text-green-800 rounded">已加载</span>' : ''}
+                </div>
+                <div class="flex items-center space-x-2">
+                    <button onclick="togglePlugin('${plugin.name}', ${!plugin.enabled})" 
+                            class="px-3 py-1 text-sm ${plugin.enabled ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-green-600 hover:bg-green-700'} text-white rounded transition">
+                        ${plugin.enabled ? '禁用' : '启用'}
+                    </button>
+                    <button onclick="reloadPlugin('${plugin.name}')" 
+                            class="px-3 py-1 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded transition">
+                        重载
+                    </button>
+                    <button onclick="uninstallPlugin('${plugin.name}')" 
+                            class="px-3 py-1 text-sm bg-red-600 hover:bg-red-700 text-white rounded transition">
+                        卸载
+                    </button>
+                </div>
+            </div>
+            
+            <div class="text-sm text-gray-600 mb-3">
+                ${plugin.metadata.description || '暂无描述'}
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+                <div>
+                    <span class="text-gray-600">作者:</span>
+                    <span class="ml-2 font-medium">${plugin.metadata.author || '未知'}</span>
+                </div>
+                <div>
+                    <span class="text-gray-600">类型:</span>
+                    <span class="ml-2 font-medium">${plugin.metadata.type || 'base'}</span>
+                </div>
+                <div>
+                    <span class="text-gray-600">加载顺序:</span>
+                    <span class="ml-2 font-medium">${plugin.metadata.load_order || 0}</span>
+                </div>
+            </div>
+            
+            ${plugin.metadata.dependencies && plugin.metadata.dependencies.length > 0 ? `
+            <div class="mt-3 pt-3 border-t border-gray-200">
+                <h5 class="text-sm font-medium text-gray-700 mb-2">依赖:</h5>
+                <div class="flex flex-wrap gap-1">
+                    ${plugin.metadata.dependencies.map(dep => `
+                        <span class="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs">${dep}</span>
+                    `).join('')}
+                </div>
+            </div>
+            ` : ''}
+        </div>
+    `).join('');
+}
+
+// 搜索插件
+function searchPlugins() {
+    const keyword = document.getElementById('plugin-search').value;
+    currentPluginSearchKeyword = keyword;
+    
+    if (!keyword.trim()) {
+        document.getElementById('online-plugins-list').innerHTML = `
+            <div class="text-center text-gray-500 py-8">
+                <p>在搜索框中输入关键词搜索插件</p>
+            </div>
+        `;
+        return;
+    }
+
+    document.getElementById('online-plugins-list').innerHTML = `
+        <div class="text-center text-gray-500 py-8">
+            <i class="fa fa-spinner fa-spin text-2xl mb-2"></i>
+            <p>搜索中...</p>
+        </div>
+    `;
+
+    fetch(`/api/plugins/search?keyword=${encodeURIComponent(keyword)}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                onlinePlugins = data.plugins;
+                updateOnlinePluginsList();
+            } else {
+                showNotification('搜索插件失败', 'error');
+                document.getElementById('online-plugins-list').innerHTML = `
+                    <div class="text-center text-gray-500 py-8">
+                        <p>搜索失败</p>
+                    </div>
+                `;
+            }
+        })
+        .catch(error => {
+            console.error('搜索插件失败:', error);
+            showNotification('搜索插件失败', 'error');
+        });
+}
+
+// 更新在线插件列表
+function updateOnlinePluginsList() {
+    const container = document.getElementById('online-plugins-list');
+    if (!container) return;
+
+    if (!onlinePlugins || onlinePlugins.length === 0) {
+        container.innerHTML = `
+            <div class="text-center text-gray-500 py-8">
+                <p>没有找到相关插件</p>
+            </div>
+        `;
+        return;
+    }
+
+    container.innerHTML = onlinePlugins.map(plugin => {
+        const isInstalled = installedPlugins.some(p => p.name === plugin.name);
+        
+        return `
+        <div class="border border-gray-200 rounded-lg p-4 mb-4 bg-white hover:bg-gray-50 transition">
+            <div class="flex items-center justify-between mb-3">
+                <div class="flex items-center space-x-3">
+                    <h4 class="text-lg font-medium text-gray-800">${plugin.name}</h4>
+                    <span class="text-sm px-2 py-1 bg-blue-100 text-blue-800 rounded">v${plugin.version || '1.0.0'}</span>
+                    ${isInstalled ? '<span class="text-sm px-2 py-1 bg-green-100 text-green-800 rounded">已安装</span>' : ''}
+                </div>
+                <div class="flex items-center space-x-2">
+                    ${!isInstalled ? `
+                    <button onclick="installPlugin('${plugin.full_name}', '${plugin.name}')" 
+                            class="px-3 py-1 text-sm bg-green-600 hover:bg-green-700 text-white rounded transition">
+                        安装
+                    </button>
+                    ` : ''}
+                    <a href="${plugin.html_url}" target="_blank" 
+                       class="px-3 py-1 text-sm bg-gray-600 hover:bg-gray-700 text-white rounded transition">
+                        查看
+                    </a>
+                </div>
+            </div>
+            
+            <div class="text-sm text-gray-600 mb-3">
+                ${plugin.description || '暂无描述'}
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+                <div>
+                    <span class="text-gray-600">作者:</span>
+                    <span class="ml-2 font-medium">${plugin.author || plugin.owner || '未知'}</span>
+                </div>
+                <div>
+                    <span class="text-gray-600">星标:</span>
+                    <span class="ml-2 font-medium">${plugin.stars || 0}</span>
+                </div>
+                <div>
+                    <span class="text-gray-600"> forks:</span>
+                    <span class="ml-2 font-medium">${plugin.forks || 0}</span>
+                </div>
+                <div>
+                    <span class="text-gray-600">更新:</span>
+                    <span class="ml-2 font-medium">${formatDate(plugin.updated_at)}</span>
+                </div>
+            </div>
+            
+            ${plugin.dependencies && plugin.dependencies.length > 0 ? `
+            <div class="mt-3 pt-3 border-t border-gray-200">
+                <h5 class="text-sm font-medium text-gray-700 mb-2">依赖:</h5>
+                <div class="flex flex-wrap gap-1">
+                    ${plugin.dependencies.map(dep => `
+                        <span class="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs">${dep}</span>
+                    `).join('')}
+                </div>
+            </div>
+            ` : ''}
+        </div>
+        `;
+    }).join('');
+}
+
+function getPluginList() {
+    document.getElementById('online-plugins-list').innerHTML = `
+        <div class="text-center text-gray-500 py-8">
+            <i class="fa fa-spinner fa-spin text-2xl mb-2"></i>
+            <p>加载中...</p>
+        </div>
+    `;
+    fetch(`/api/plugins/lists`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                onlinePlugins = data.plugins;
+                updateOnlinePluginsList();
+            } else {
+                showNotification('获取插件失败', 'error');
+                document.getElementById('online-plugins-list').innerHTML = `
+                    <div class="text-center text-gray-500 py-8">
+                        <p>获取失败</p>
+                    </div>
+                `;
+            }
+        })
+        .catch(error => {
+            console.error('获取插件失败:', error);
+            showNotification('获取插件失败', 'error');
+        });
+}
+
+// 安装插件
+function installPlugin(repoFullName, pluginName) {
+    layer.confirm(`确定要安装插件 "${pluginName}" 吗？`, {
+        icon: 3,
+        title: '确认安装'
+    }, function(index) {
+        fetch('/api/plugins/install', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                repo_full_name: repoFullName,
+                plugin_name: pluginName
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            showNotification(data.message, data.success ? 'success' : 'error');
+            if (data.success) {
+                loadInstalledPlugins();
+                // 重新搜索以更新安装状态
+                if (currentPluginSearchKeyword) {
+                    searchPlugins();
+                }
+            }
+        })
+        .catch(error => {
+            console.error('安装插件失败:', error);
+            showNotification('安装插件失败', 'error');
+        });
+        layer.close(index);
+    });
+}
+
+// 卸载插件
+function uninstallPlugin(pluginName) {
+    layer.confirm(`确定要卸载插件 "${pluginName}" 吗？此操作不可恢复！`, {
+        icon: 3,
+        title: '确认卸载'
+    }, function(index) {
+        fetch('/api/plugins/uninstall', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plugin_name: pluginName })
+        })
+        .then(response => response.json())
+        .then(data => {
+            showNotification(data.message, data.success ? 'success' : 'error');
+            if (data.success) {
+                loadInstalledPlugins();
+                // 重新搜索以更新安装状态
+                if (currentPluginSearchKeyword) {
+                    searchPlugins();
+                }
+            }
+        })
+        .catch(error => {
+            console.error('卸载插件失败:', error);
+            showNotification('卸载插件失败', 'error');
+        });
+        layer.close(index);
+    });
+}
+
+// 启用/禁用插件
+function togglePlugin(pluginName, enable) {
+    fetch('/api/plugins/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            plugin_name: pluginName,
+            enabled: enable
+        })
+    })
+    .then(response => response.json())
+    .then(data => {
+        showNotification(data.message, data.success ? 'success' : 'error');
+        if (data.success) {
+            loadInstalledPlugins();
+        }
+    })
+    .catch(error => {
+        console.error('切换插件状态失败:', error);
+        showNotification('切换插件状态失败', 'error');
+    });
+}
+
+// 重新加载插件
+function reloadPlugin(pluginName) {
+    fetch('/api/plugins/reload', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plugin_name: pluginName })
+    })
+    .then(response => response.json())
+    .then(data => {
+        showNotification(data.message, data.success ? 'success' : 'error');
+        if (data.success) {
+            loadInstalledPlugins();
+        }
+    })
+    .catch(error => {
+        console.error('重新加载插件失败:', error);
+        showNotification('重新加载插件失败', 'error');
+    });
+}
+
+// 格式化日期
+function formatDate(dateString) {
+    if (!dateString) return '未知';
+    const date = new Date(dateString);
+    return date.toLocaleDateString();
+}
+
+// 创建插件模态框
+function showCreatePluginModal() {
+    document.getElementById('create-plugin-modal').classList.remove('hidden');
+}
+
+function hideCreatePluginModal() {
+    document.getElementById('create-plugin-modal').classList.add('hidden');
+}
+
+// 创建插件表单提交
+document.addEventListener('DOMContentLoaded', function() {
+    const searchInput = document.getElementById('plugin-search');
+    if (searchInput) {
+        searchInput.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                searchPlugins();
+            }
+        });
+    }
+
+    const createPluginForm = document.getElementById('create-plugin-form');
+    if (createPluginForm) {
+        createPluginForm.addEventListener('submit', function(e) {
+            e.preventDefault();
+            const formData = new FormData(this);
+            
+            const pluginData = {
+                name: formData.get('name'),
+                type: formData.get('type'),
+                author: formData.get('author'),
+                description: formData.get('description'),
+                version: formData.get('version')
+            };
+            
+            fetch('/api/plugins/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(pluginData)
+            })
+            .then(response => response.json())
+            .then(data => {
+                showNotification(data.message, data.success ? 'success' : 'error');
+                if (data.success) {
+                    hideCreatePluginModal();
+                    this.reset();
+                    loadInstalledPlugins();
+                }
+            })
+            .catch(error => {
+                console.error('创建插件失败:', error);
+                showNotification('创建插件失败', 'error');
+            });
         });
     }
 });
@@ -4646,42 +5468,160 @@ function updateProgressCircle(elementId, targetPercentage) {
     requestAnimationFrame(animate);
 }
 
-    function updateSystemStats() {
-        fetch('/api/system_stats')
-            .then(response => response.json())
-            .then(data => {
-                if (data.success && data.data) {
-                    const stats = data.data;
-                    
-                    // 更新CPU信息
-                    updateProgressCircle('cpu-progress', stats.cpu.usage);
-                    document.getElementById('cpu-usage').textContent = `${stats.cpu.usage}%`;
-                    document.getElementById('cpu-cores').textContent = 
-                        `${stats.cpu.physical_cores}物理 / ${stats.cpu.logical_cores}逻辑`;
-                    
-                    // 更新内存信息
-                    updateProgressCircle('mem-progress', stats.memory.usage);
-                    document.getElementById('mem-usage').textContent = `${stats.memory.usage}%`;
-                    document.getElementById('mem-details').textContent = 
-                        `${stats.memory.used}/${stats.memory.total} GB`;
-                    
-                    // 更新磁盘信息
-                    updateProgressCircle('disk-progress', stats.disk.usage);
-                    document.getElementById('disk-usage').textContent = `${stats.disk.usage}%`;
-                    document.getElementById('disk-details').textContent = 
-                        `${stats.disk.used}/${stats.disk.total} GB`;
-                    
-                    // 更新系统负载 (仅Unix系统)
-                    if (stats.load_avg) {
-                        document.getElementById('load-average-container').style.display = 'block';
-                        document.getElementById('load-1').textContent = stats.load_avg[0];
-                        document.getElementById('load-5').textContent = stats.load_avg[1];
-                        document.getElementById('load-15').textContent = stats.load_avg[2];
+// 网络IO图表相关变量
+let networkChart = null;
+let networkData = {
+    labels: [],
+    sent: [],
+    recv: []
+};
+const MAX_DATA_POINTS = 30; // 最多显示30个数据点
+
+// 初始化网络IO图表
+function initNetworkChart() {
+    const ctx = document.getElementById('network-speed-chart').getContext('2d');
+    
+    networkChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: networkData.labels,
+            datasets: [
+                {
+                    label: '上传速度',
+                    data: networkData.sent,
+                    borderColor: '#ef4444',
+                    backgroundColor: 'rgba(239, 68, 68, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4
+                },
+                {
+                    label: '下载速度',
+                    data: networkData.recv,
+                    borderColor: '#10b981',
+                    backgroundColor: 'rgba(16, 185, 129, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    position: 'top',
+                },
+                tooltip: {
+                    mode: 'index',
+                    intersect: false,
+                    callbacks: {
+                        label: function(context) {
+                            return `${context.dataset.label}: ${context.parsed.y} KB/s`;
+                        }
                     }
                 }
-            })
-            .catch(error => console.error('获取系统状态失败:', error));
+            },
+            scales: {
+                x: {
+                    display: true,
+                    title: {
+                        display: true,
+                        text: '时间'
+                    },
+                    grid: {
+                        display: false
+                    }
+                },
+                y: {
+                    display: true,
+                    title: {
+                        display: true,
+                        text: '速度 (KB/s)'
+                    },
+                    beginAtZero: true
+                }
+            },
+            interaction: {
+                intersect: false,
+                mode: 'nearest'
+            }
+        }
+    });
+}
+
+// 更新网络IO数据
+function updateNetworkData(stats) {
+    if (!stats.network) return;
+    
+    const network = stats.network;
+    const now = new Date().toLocaleTimeString();
+    
+    // 添加新数据点
+    networkData.labels.push(now);
+    networkData.sent.push(network.sent_speed);
+    networkData.recv.push(network.recv_speed);
+    
+    // 限制数据点数量
+    if (networkData.labels.length > MAX_DATA_POINTS) {
+        networkData.labels.shift();
+        networkData.sent.shift();
+        networkData.recv.shift();
     }
+    
+    // 更新统计信息
+    document.getElementById('net-sent-speed').textContent = `${network.sent_speed} KB/s`;
+    document.getElementById('net-recv-speed').textContent = `${network.recv_speed} KB/s`;
+    document.getElementById('net-sent-total').textContent = `${network.bytes_sent} MB`;
+    document.getElementById('net-recv-total').textContent = `${network.bytes_recv} MB`;
+    document.getElementById('net-errors').textContent = network.errors_in + network.errors_out;
+    document.getElementById('net-drops').textContent = network.drops_in + network.drops_out;
+    
+    // 更新图表
+    if (networkChart) {
+        networkChart.update();
+    }
+}
+
+function updateSystemStats() {
+    fetch('/api/system_stats')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success && data.data) {
+                const stats = data.data;
+                    
+                // 更新CPU信息
+                updateProgressCircle('cpu-progress', stats.cpu.usage);
+                document.getElementById('cpu-usage').textContent = `${stats.cpu.usage}%`;
+                document.getElementById('cpu-cores').textContent = 
+                    `${stats.cpu.physical_cores}物理 / ${stats.cpu.logical_cores}逻辑`;
+                    
+                // 更新内存信息
+                updateProgressCircle('mem-progress', stats.memory.usage);
+                document.getElementById('mem-usage').textContent = `${stats.memory.usage}%`;
+                document.getElementById('mem-details').textContent = 
+                    `${stats.memory.used}/${stats.memory.total} GB`;
+                
+                // 更新磁盘信息
+                updateProgressCircle('disk-progress', stats.disk.usage);
+                document.getElementById('disk-usage').textContent = `${stats.disk.usage}%`;
+                document.getElementById('disk-details').textContent = 
+                    `${stats.disk.used}/${stats.disk.total} GB`;
+                    
+                // 更新系统负载 (仅Unix系统)
+                if (stats.load_avg) {
+                    document.getElementById('load-average-container').style.display = 'block';
+                    document.getElementById('load-1').textContent = stats.load_avg[0];
+                    document.getElementById('load-5').textContent = stats.load_avg[1];
+                    document.getElementById('load-15').textContent = stats.load_avg[2];
+                }
+
+                updateNetworkData(stats);
+            }
+        })
+        .catch(error => console.error('获取系统状态失败:', error));
+}
 
 // 启动机器人
 function startBot() {
@@ -4863,6 +5803,10 @@ document.addEventListener('DOMContentLoaded', function() {
     updateSystemStats();
     setInterval(updateSystemStats, 2000);
     initImageBed();
+
+    initNetworkChart();
+    loadInstalledPlugins()
+    getPluginList()
 });
 </script>
 {% endblock %}''')

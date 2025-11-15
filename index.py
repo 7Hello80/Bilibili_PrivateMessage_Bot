@@ -15,6 +15,7 @@ import threading
 import io
 import wbi
 import bili_ticket
+from plugin_loader import plugin_loader
 
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
@@ -30,7 +31,7 @@ else:
 
 config = ConfigManage.ConfigManager("config.json")
 
-version = "1.0.7"
+version = "1.0.8"
 
 # 初始化colorama
 colorama.init(autoreset=True)
@@ -45,6 +46,14 @@ class BotManager:
     def __init__(self):
         self.bots = []
         self.running = False
+        try:
+            from plugin_loader import plugin_loader
+            self.plugin_loader = plugin_loader
+            # 设置依赖 - 这里先传入 None，稍后在 start_all 中设置真实的 bots
+            self.plugin_loader.set_dependencies(self, config)
+        except ImportError as e:
+            print(f"{Fore.YELLOW}⚠ 插件系统不可用: {e}")
+            self.plugin_loader = None
         
     def start_all(self):
         """启动所有启用的机器人"""
@@ -52,6 +61,7 @@ class BotManager:
             return False
             
         self.running = True
+        plugin_loader.load_all_plugins()
         accounts = config.get_accounts()
         
         for i, account in enumerate(accounts):
@@ -76,6 +86,30 @@ class BotManager:
                 thread.start()
                 
         print(f"{Fore.GREEN}✓ 已启动 {len(self.bots)} 个机器人实例")
+
+        if self.plugin_loader:
+            for bot in self.bots:
+                bot.set_plugin_loader(self.plugin_loader)
+
+        if self.plugin_loader:
+            print(f"{Fore.BLUE}正在加载插件...")
+            try:
+                # 重新设置依赖，传入真实的 bots
+                self.plugin_loader.set_dependencies(self, config)
+                
+                # 加载所有插件
+                success = self.plugin_loader.load_all_plugins()
+                if success:
+                    loaded_plugins = [p for p in self.plugin_loader.get_all_plugins() if p.instance]
+                    print(f"{Fore.GREEN}✓ 已加载 {len(loaded_plugins)} 个插件")
+                    
+                    # 打印已加载的插件信息
+                    for plugin in loaded_plugins:
+                        print(f"{Fore.CYAN}  - {plugin.name} (v{plugin.metadata.get('version', '1.0.0')})")
+                else:
+                    print(f"{Fore.YELLOW}⚠ 插件加载过程中出现问题")
+            except Exception as e:
+                print(f"{Fore.RED}✗ 插件加载失败: {e}")
         return True
         
     def stop_all(self):
@@ -85,6 +119,9 @@ class BotManager:
             bot.stop()
         self.bots.clear()
         print(f"{Fore.GREEN}✓ 已停止所有机器人实例")
+        for plugin in plugin_loader.get_all_plugins():
+            if plugin.instance:
+                plugin.unload()
 
 class SimpleBilibiliReply:
     def __init__(self, account_name, sessdata, bili_jct, self_uid, device_id, keywords, at_user, auto_focus, poll_interval=5, auto_reply_follow=False, follow_reply_message="感谢关注！"):
@@ -97,6 +134,8 @@ class SimpleBilibiliReply:
         
         # 生成设备ID
         self.device_id = device_id
+
+        self.plugin_loader = None
         
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
@@ -127,6 +166,10 @@ class SimpleBilibiliReply:
     def stop(self):
         """停止机器人"""
         self.running = False
+    
+    def set_plugin_loader(self, plugin_loader):
+        """设置插件加载器"""
+        self.plugin_loader = plugin_loader
 
     def get_sessions(self) -> List[Dict]:
         """获取会话列表"""
@@ -516,8 +559,24 @@ class SimpleBilibiliReply:
                         continue
                     
                     print(f"{Fore.GREEN}✓ [{self.account_name}] 收到来自 {Fore.MAGENTA}{talker_id} {Fore.GREEN}的消息: {Fore.MAGENTA}{message_text}")
+
+                    plugin_reply = None
+                    if self.plugin_loader:
+                        plugin_reply = self.process_message_with_plugins(message_text, {
+                            'talker_id': talker_id,
+                            'sender_uid': sender_uid,
+                            'content': message_text,
+                            'timestamp': timestamp,
+                            'msg_id': msg_id
+                        })
                     
-                    reply = self.check_keywords(message_text)
+                    if plugin_reply:
+                        reply = plugin_reply
+                        print(f"{Fore.CYAN}  [{self.account_name}] 插件返回回复: {Fore.MAGENTA}{reply}")
+                    else:
+                        # 否则使用原有的关键词匹配
+                        reply = self.check_keywords(message_text)
+
                     if reply:
                         if self.is_following_me(talker_id):
                             success = self.send_message(talker_id, reply)
@@ -546,6 +605,32 @@ class SimpleBilibiliReply:
                     
         except Exception as e:
             print(f"{Fore.RED}✗ [{self.account_name}] 处理消息主循环异常: {Fore.MAGENTA}{e}")
+        
+    def process_message_with_plugins(self, message: str, message_data: dict) -> Optional[str]:
+        """使用插件处理消息"""
+        if not self.plugin_loader:
+            return None
+            
+        try:
+            # 获取所有已加载的插件
+            plugins = self.plugin_loader.get_all_plugins()
+            
+            for plugin in plugins:
+                if plugin.enabled and plugin.instance:
+                    # 检查插件是否有消息处理能力
+                    if hasattr(plugin.instance, 'process_message'):
+                        try:
+                            result = plugin.instance.process_message(message_data)
+                            if result:
+                                print(f"{Fore.CYAN}  [{self.account_name}] 插件 {plugin.name} 处理了消息")
+                                return result
+                        except Exception as e:
+                            print(f"{Fore.RED}✗ [{self.account_name}] 插件 {plugin.name} 处理消息失败: {e}")
+            
+            return None
+        except Exception as e:
+            print(f"{Fore.RED}✗ [{self.account_name}] 插件消息处理异常: {e}")
+            return None
 
     def run(self):
         """运行监听"""
