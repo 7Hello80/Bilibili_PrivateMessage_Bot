@@ -39,6 +39,8 @@ Bilibili PrivateMessage Bot (后文简称BPMB) 这是一个基于Bilibili私信A
 - [x] 发送图片消息及图库功能
 
 - [x] 关注自动回复
+      
+- [x] 插件系统
 
 ## 参数配置
 
@@ -72,7 +74,7 @@ git clone https://github.com/7Hello80/Bilibili_PrivateMessage_Bot
 
 2. 安装所需的Python依赖
 ```bash
-pip install requests uuid json psutil flask colorama
+pip install requests uuid json psutil flask colorama distro qrcode
 ```
 
 3. 启动服务
