@@ -5804,9 +5804,9 @@ document.addEventListener('DOMContentLoaded', function() {
     setInterval(updateSystemStats, 2000);
     initImageBed();
 
-    initNetworkChart();
     loadInstalledPlugins()
     getPluginList()
+    initNetworkChart();
 });
 </script>
 {% endblock %}''')
