@@ -1273,7 +1273,7 @@ def github_login():
     
     params = {
         'client_id': GITHUB_CLIENT_ID,
-        'redirect_uri': "http://",
+        'redirect_uri': url_for("github_callback", _external=True),
         'scope': 'public_repo,read:user',
         'state': state,
         'allow_signup': 'true'
@@ -1352,12 +1352,64 @@ def github_callback():
 @app.route('/github/logout')
 @login_required
 def github_logout():
-    """GitHub 退出登录"""
-    panel_config.update_github_token("")
-    github_manager._init_github_client()
+    """GitHub 退出登录 - 清除本地令牌并调用 GitHub API 撤销访问"""
+    try:
+        # 获取当前的 GitHub 配置
+        github_config = panel_config.get_github_config()
+        access_token = github_config.get('access_token', '')
+        
+        # 如果有访问令牌，先调用 GitHub API 撤销它
+        if access_token:
+            try:
+                # GitHub OAuth 应用撤销令牌的 URL
+                revoke_url = "https://api.github.com/applications/{client_id}/token"
+                
+                # 获取客户端 ID 和密钥
+                client_id = github_config.get('client_id', '')
+                client_secret = github_config.get('client_secret', '')
+                
+                if client_id and client_secret:
+                    # 使用 Basic Auth 调用 GitHub API 撤销令牌
+                    auth = (client_id, client_secret)
+                    data = {'access_token': access_token}
+                    
+                    response = requests.delete(
+                        revoke_url.format(client_id=client_id),
+                        auth=auth,
+                        json=data,
+                        timeout=10
+                    )
+                    
+                    if response.status_code == 204:
+                        log_handler.add_log("GitHub 访问令牌已成功撤销")
+                    else:
+                        log_handler.add_log(f"GitHub 令牌撤销 API 返回状态码: {response.status_code}", "WARNING")
+                else:
+                    log_handler.add_log("GitHub 客户端 ID 或密钥未配置，无法调用撤销 API", "WARNING")
+                    
+            except Exception as api_error:
+                log_handler.add_log(f"调用 GitHub 撤销 API 失败: {str(api_error)}", "WARNING")
+                # 即使撤销 API 调用失败，仍然继续本地退出流程
+        
+        # 清除本地存储的访问令牌（保留其他配置）
+        panel_config.update_github_config(
+            client_id=github_config.get('client_id', ''),
+            client_secret=github_config.get('client_secret', ''),
+            access_token="",  # 清空访问令牌
+            repo_owner=github_config.get('repo_owner', '7Hello80'),
+            repo_name=github_config.get('repo_name', 'Bilibili_PrivateMessage_Bot')
+        )
+        
+        # 重新初始化 GitHub 客户端
+        github_manager._init_github_client()
+        
+        log_handler.add_log("GitHub 退出登录完成")
+        
+        return redirect(url_for('index') + '#github_discussions')
     
-    log_handler.add_log("GitHub退出登录")
-    return redirect(url_for('index') + '#github_discussions')
+    except Exception as e:
+        log_handler.add_log(f"GitHub 退出登录失败: {str(e)}", "ERROR")
+        return redirect(url_for('index') + f'?error=GitHub退出登录失败: {str(e)}#github_discussions')
 
 # GitHub讨论区API路由
 @app.route('/api/github/discussions')
@@ -1438,6 +1490,7 @@ def get_github_user():
 def github_config():
     """GitHub配置管理"""
     if request.method == 'GET':
+        
         github_config = panel_config.get_github_config()
         # 不返回client_secret
         safe_config = {
