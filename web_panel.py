@@ -1,18 +1,12 @@
 import json
 import os
 import logging
-<<<<<<< HEAD
 import secrets
 import string
 import threading
 import time
 from datetime import datetime, timedelta
 from urllib.parse import urlencode
-=======
-import threading
-import time
-from datetime import datetime, timedelta
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
 from werkzeug.security import generate_password_hash, check_password_hash
 import subprocess
@@ -33,11 +27,8 @@ from plugin_loader import plugin_loader
 from plugin_manage import plugin_manager
 from plugin_dev import PluginDeveloper
 from plugin_create import plugin_creator
-<<<<<<< HEAD
 import github
 from github import Github
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
 
 # 导入现有的配置管理
 import ConfigManage
@@ -64,14 +55,6 @@ app.secret_key = 'bilibili_bot_panel_secret_key_2024'
 PANEL_CONFIG_FILE = "panel_config.json"
 LOG_FILE = "bot_runtime.log"
 
-<<<<<<< HEAD
-=======
-# 全局变量
-bot_process = None
-is_bot_running = False
-bot_logs = []
-
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
 class PanelConfigManager:
     def __init__(self, config_path: str):
         self.config_path = config_path
@@ -86,14 +69,11 @@ class PanelConfigManager:
             },
             "bot_settings": {
                 "poll_interval": 5
-<<<<<<< HEAD
             },
             "github": {
                 "access_token": "",
                 "repo_owner": "7Hello80",
                 "repo_name": "Bilibili_PrivateMessage_Bot"
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
             }
         }
         
@@ -104,15 +84,11 @@ class PanelConfigManager:
         
         try:
             with open(self.config_path, 'r', encoding='utf-8') as f:
-<<<<<<< HEAD
                 config = json.load(f)
                 # 确保github配置存在
                 if "github" not in config:
                     config["github"] = default_config["github"]
                 return config
-=======
-                return json.load(f)
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
         except (json.JSONDecodeError, FileNotFoundError):
             self.config = default_config
             self.save_config()
@@ -155,7 +131,6 @@ class PanelConfigManager:
         if password:  # 只有当密码不为空时才更新密码
             self.config["admin"]["password"] = generate_password_hash(password)
         self.save_config()
-<<<<<<< HEAD
     
     def get_github_config(self):
         """获取GitHub配置"""
@@ -378,11 +353,6 @@ github_manager = GitHubDiscussionManager(panel_config)
 
 
 # 初始化配置管理器
-=======
-
-# 初始化配置管理器
-panel_config = PanelConfigManager(PANEL_CONFIG_FILE)
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
 bot_config = ConfigManage.ConfigManager("config.json")
 
 # 日志处理
@@ -587,10 +557,7 @@ def add_account():
             "at_user": account_data.get("at_user", False),
             "auto_focus": account_data.get("auto_focus", False),
             "auto_reply_follow": account_data.get("auto_reply_follow", False),  # 新增
-<<<<<<< HEAD
             "no_focus_hf": account_data.get("no_focus_hf", False),
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
             "follow_reply_message": account_data.get("follow_reply_message", "感谢关注！"),  # 新增
             "enabled": account_data.get("enabled", True)
         }
@@ -761,10 +728,7 @@ def update_account(account_index):
             "at_user": account_data.get("at_user", False),
             "auto_focus": account_data.get("auto_focus", False),
             "auto_reply_follow": account_data.get("auto_reply_follow", False),  # 新增
-<<<<<<< HEAD
             "no_focus_hf": account_data.get("no_focus_hf", False),
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
             "follow_reply_message": account_data.get("follow_reply_message", "感谢关注！"),  # 新增
             "enabled": account_data.get("enabled", True)
         }
@@ -1290,7 +1254,6 @@ def toggle_plugin():
     except Exception as e:
         log_handler.add_log(f"切换插件状态失败: {str(e)}", "ERROR")
         return jsonify({'success': False, 'message': f'操作失败: {str(e)}'})
-<<<<<<< HEAD
     
 # GitHub OAuth 配置
 GITHUB_CLIENT_ID = ConfigManage.base64_decode("T3YyM2xpdmh6dlpJeWxWU3hYMlg=")
@@ -1503,8 +1466,6 @@ def github_config():
         except Exception as e:
             log_handler.add_log(f"更新GitHub配置失败: {str(e)}", "ERROR")
             return jsonify({'success': False, 'message': f'更新配置失败: {str(e)}'})
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
 
 @app.route('/api/plugins/reload', methods=['POST'])
 @login_required
@@ -1816,7 +1777,6 @@ def create_templates():
     if not os.path.exists(templates_dir):
         os.makedirs(templates_dir)
     
-<<<<<<< HEAD
     # 创建错误页面
     with open(os.path.join(templates_dir, 'error.html'), 'w', encoding='utf-8') as f:
         f.write('''{% extends "base.html" %}
@@ -1864,8 +1824,6 @@ def create_templates():
 </div>
 {% endblock %}''')
     
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
     # 创建基础模板
     with open(os.path.join(templates_dir, 'base.html'), 'w', encoding='utf-8') as f:
         f.write('''<!DOCTYPE html>
@@ -1909,13 +1867,9 @@ def create_templates():
     <link href="//unpkg.com/layui@2.12.1/dist/css/layui.css" rel="stylesheet">
     <!-- 引入 layui.js -->
     <script src="//unpkg.com/layui@2.12.1/dist/layui.js"></script>
-<<<<<<< HEAD
     <script src="https://proxy.bzks.qzz.io/npm/chart.js"></script>
     <!-- 在 base.html 的 head 部分添加 -->
     <script src="https://proxy.bzks.qzz.io/npm/marked/marked.min.js"></script>
-=======
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
     <style>
         .gradient-bg {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -2077,7 +2031,6 @@ def create_templates():
         .network-speed-indicator.recv {
             color: #10b981;
         }
-<<<<<<< HEAD
         /* 完全隐藏所有滚动条但保持滚动功能 */
         .hide-scrollbar,
         #log-container,
@@ -2179,8 +2132,6 @@ def create_templates():
         .no-scrollbar::-webkit-scrollbar {
             display: none !important;
         }
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
     </style>
 </head>
 <body class="bg-gray-50 font-sans">
@@ -2290,13 +2241,10 @@ def create_templates():
                 <i class="fa fa-users text-gray-400 w-5"></i>
                 <span>多账号管理</span>
             </a>
-<<<<<<< HEAD
             <a href="#github_discussions" onclick="showSection('github_discussions')" class="nav-item flex items-center space-x-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-lg transition">
                 <i class="fab fa-github text-gray-400 w-5"></i>
                 <span>GitHub讨论区</span>
             </a>
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
             <a href="#plugins" onclick="showSection('plugins')" class="nav-item flex items-center space-x-3 px-4 py-3 text-gray-600 hover:bg-gray-50 rounded-lg transition">
                 <i class="fa fa-puzzle-piece text-gray-400 w-5"></i>
                 <span>插件商店</span>
@@ -2333,7 +2281,6 @@ def create_templates():
 
     <!-- 主内容区 -->
     <div class="flex-1 overflow-auto lg:ml-0">
-<<<<<<< HEAD
         <!-- GitHub讨论区 -->
         <div id="github_discussions" class="section p-4 lg:p-6" style="display: none;">
             <div class="mb-6">
@@ -2388,8 +2335,6 @@ def create_templates():
                 </div>
             </div>
         </div>
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
         <div id="plugins" class="section p-4 lg:p-6" style="display: none;">
             <div class="mb-6">
                 <div class="flex items-center">
@@ -3446,14 +3391,11 @@ def create_templates():
                                            class="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500">
                                     <label for="account-auto-focus" class="ml-2 text-sm text-gray-700">自动关注</label>
                                 </div>
-<<<<<<< HEAD
                                 <div class="flex items-center">
                                     <input type="checkbox" name="no_focus_hf" id="account-no-focus"
                                            class="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500">
                                     <label for="account-no-focus" class="ml-2 text-sm text-gray-700">开启未关注也回复功能</label>
                                 </div>
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
                             </div>
                         </div>
                     </div>
@@ -3549,21 +3491,17 @@ def create_templates():
                                            class="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500">
                                     <label for="edit-account-auto-focus" class="ml-2 text-sm text-gray-700">自动关注</label>
                                 </div>
-<<<<<<< HEAD
                                 <div class="flex items-center">
                                     <input type="checkbox" name="no_focus_hf" id="edit-account-no-focus"
                                            class="w-4 h-4 text-primary-600 border-gray-300 rounded focus:ring-primary-500">
                                     <label for="edit-account-no-focus" class="ml-2 text-sm text-gray-700">开启未关注也回复功能</label>
                                 </div>
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
                             </div>
                         </div>
 
                         <!-- 账号关键词管理 -->
                         <div class="mt-6 pt-6 border-t border-gray-200">
                             <h4 class="text-lg font-medium text-gray-800 mb-4">账号关键词管理</h4>
-<<<<<<< HEAD
                             <!-- 添加关键词表单 -->
                             <div class="bg-gray-50 rounded-lg p-4 mb-4">
                                 <h5 class="text-md font-medium text-gray-700 mb-3">添加新关键词</h5>
@@ -3591,34 +3529,6 @@ def create_templates():
                                         </button>
                                     </div>
                                 </div>
-=======
-                            
-                            <!-- 添加关键词表单 -->
-                            <div class="bg-gray-50 rounded-lg p-4 mb-4">
-                                <h5 class="text-md font-medium text-gray-700 mb-3">添加新关键词</h5>
-                                <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
-                                    <div class="lg:col-span-2">
-                                        <input type="text" id="edit-account-keyword-input" 
-                                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
-                                               placeholder="关键词">
-                                    </div>
-                                    <div class="lg:col-span-2">
-                                        <input type="text" id="edit-account-reply-input"
-                                               class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
-                                               placeholder="回复内容">
-                                    </div>
-                                    <div class="lg:col-span-1">
-                                        <button type="button" onclick="addAccountKeyword()"
-                                                class="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 transition">
-                                            <i class="fa fa-plus mr-1"></i>添加
-                                        </button>
-                                    </div>
-                                </div>
-                                <!-- 艾特用户提示 -->
-                                <div class="mt-2 text-sm text-gray-600">
-                                    提示：在回复内容中使用 <code class="bg-gray-200 px-1 rounded">[at_user]</code> 来@用户
-                                </div>
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
                             </div>
 
                             <!-- 关键词列表 -->
@@ -3731,32 +3641,18 @@ def create_templates():
             </div>
             <div class="bg-gray-50 rounded-lg p-4 mb-4">
                 <h5 class="text-md font-medium text-gray-700 mb-3">添加新全局关键词</h5>
-<<<<<<< HEAD
                 <div class="space-y-4">
                     <div>
-=======
-                <div class="grid grid-cols-1 lg:grid-cols-5 gap-4">
-                    <div class="lg:col-span-2">
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
                         <input type="text" id="edit-account-keyword-input-global" 
                             class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2focus:ring-primary-500 focus:border-primary-500 transition"
                             placeholder="关键词">
                     </div>
-<<<<<<< HEAD
                     <div>
                         <textarea id="edit-account-reply-input-global" rows="4"
                             class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition resize-vertical"
                             placeholder="请输入回复内容（支持换行）"></textarea>
                         </div>
                         <div>
-=======
-                    <div class="lg:col-span-2">
-                        <input type="text" id="edit-account-reply-input-global"
-                            class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2focus:ring-primary-500 focus:border-primary-500 transition"
-                            placeholder="回复内容">
-                        </div>
-                        <div class="lg:col-span-1">
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
                             <button type="button" onclick="showAddGlobalKeywordModal()"
                                 class="w-full px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 focus:outline-nonfocus:ring-2 focus:ring-green-500 transition">
                                     <i class="fa fa-plus mr-1"></i>添加
@@ -3778,7 +3674,6 @@ def create_templates():
         </div>
     </div>
 </div>
-<<<<<<< HEAD
 <!-- 修改关键词模态框 -->
 <div id="edit-keyword-modal" class="fixed inset-0 bg-black bg-opacity-50 z-50 hidden">
     <div class="flex items-center justify-center min-h-screen p-4">
@@ -3969,8 +3864,6 @@ def create_templates():
         </div>
     </div>
 </div>
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
 
 <script>
 let layuiForm = null;
@@ -5233,7 +5126,6 @@ function initializeImageUpload() {
     });
 }
 
-<<<<<<< HEAD
 const markdownStyles = `
 /* Markdown 渲染样式 */
 .markdown-body {
@@ -5391,8 +5283,6 @@ const styleElement = document.createElement('style');
 styleElement.textContent = markdownStyles;
 document.head.appendChild(styleElement);
 
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
 function handleFileSelect(file) {
     if (!file) return;
 
@@ -5712,7 +5602,6 @@ function clearAllLogs() {
         })
 }
 
-<<<<<<< HEAD
 // GitHub讨论区功能
 let currentDiscussions = [];
 let currentDiscussion = null;
@@ -6082,8 +5971,6 @@ function initGitHubDiscussions() {
     loadDiscussions();
 }
 
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
 document.addEventListener('DOMContentLoaded', function() {
     // 编辑账号模态框
     const editAutoReplyFollowCheckbox = document.getElementById('edit-account-auto-reply-follow');
@@ -6099,7 +5986,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-<<<<<<< HEAD
     // 修改关键词表单提交
     const editKeywordForm = document.getElementById('edit-keyword-form');
     if (editKeywordForm) {
@@ -6110,8 +5996,6 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
     // 添加账号模态框
     const addAutoReplyFollowCheckbox = document.getElementById('add-account-auto-reply-follow');
     const addFollowReplyContainer = document.getElementById('add-follow-reply-container');
@@ -6442,10 +6326,7 @@ function editAccount(index) {
                 document.getElementById('edit-account-enabled').checked = account.enabled || false;
                 document.getElementById('edit-account-at-user').checked = account.at_user || false;
                 document.getElementById('edit-account-auto-focus').checked = account.auto_focus || false;
-<<<<<<< HEAD
                 document.getElementById('edit-account-no-focus').checked = account.no_focus_hf || false;
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
                 
                 // 更新关键词列表
                 updateAccountKeywordsList(account.keyword || {});
@@ -6485,7 +6366,6 @@ function updateAccountKeywordsList(keywords) {
         return;
     }
     
-<<<<<<< HEAD
     container.innerHTML = Object.entries(keywords).map(([keyword, reply]) => {
         // 使用数据属性存储原始数据，避免转义问题
         return `
@@ -6522,20 +6402,6 @@ function updateAccountKeywordsList(keywords) {
             deleteAccountKeyword(keyword);
         }
     });
-=======
-    container.innerHTML = Object.entries(keywords).map(([keyword, reply]) => `
-        <div class="flex items-center justify-between p-3 border border-gray-200 rounded-lg bg-white">
-            <div class="flex-1">
-                <div class="font-medium text-gray-800">${keyword}</div>
-                <div class="text-sm text-gray-600">${reply}</div>
-            </div>
-            <button onclick="deleteAccountKeyword('${keyword}')" 
-                    class="ml-4 px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700 transition">
-                <i class="fa fa-trash"></i>
-            </button>
-        </div>
-    `).join('');
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
 }
 
 function addAccountKeyword() {
@@ -6623,7 +6489,6 @@ function deleteAccountKeyword(keyword) {
     })
 }
 
-<<<<<<< HEAD
 // 当前编辑的关键词
 let currentEditingKeyword = null;
 
@@ -6708,8 +6573,6 @@ function saveKeywordEdit(formData) {
     });
 }
 
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
 function deleteAccount(index) {
     layer.confirm('确定要删除这个账号吗？此操作不可恢复！', {
         icon: 3,
@@ -6922,10 +6785,7 @@ if (addAccountForm) {
             at_user: formData.get('at_user') === 'on',
             auto_focus: formData.get('auto_focus') === 'on',
             auto_reply_follow: formData.get('auto_reply_follow') === 'on',  // 新增
-<<<<<<< HEAD
             no_focus_hf: formData.get("no_focus_hf") === 'on',
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
             follow_reply_message: formData.get('follow_reply_message') || '感谢关注！',  // 新增
             keywords: {}
         };
@@ -6970,10 +6830,7 @@ if (editAccountForm) {
             at_user: formData.get('at_user') === 'on',
             auto_focus: formData.get('auto_focus') === 'on',
             auto_reply_follow: formData.get('auto_reply_follow') === 'on',  // 新增
-<<<<<<< HEAD
             no_focus_hf: formData.get('no_focus_hf') === 'on',
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
             follow_reply_message: formData.get('follow_reply_message') || '感谢关注！'  // 新增
         };
         
@@ -7447,7 +7304,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
     loadInstalledPlugins()
     getPluginList()
-<<<<<<< HEAD
     initGitHubDiscussions();
     
     // 在显示GitHub讨论区时重新加载
@@ -7465,8 +7321,6 @@ document.addEventListener('DOMContentLoaded', function() {
         
         observer.observe(githubSection, { attributes: true });
     }
-=======
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
     initNetworkChart();
 });
 </script>
@@ -7483,8 +7337,4 @@ if __name__ == '__main__':
     print(f"{Fore.GREEN}请及时修改默认密码！")
     
     # 关闭调试模式，避免重启
-<<<<<<< HEAD
     app.run(debug=False, host='0.0.0.0', port=5000)
-=======
-    app.run(debug=False, host='0.0.0.0', port=5000)
->>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
