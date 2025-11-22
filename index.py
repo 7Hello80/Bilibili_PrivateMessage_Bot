@@ -77,7 +77,10 @@ class BotManager:
                     auto_focus=account.get("auto_focus", False),
                     auto_reply_follow=account.get("auto_reply_follow", False),
                     follow_reply_message=account.get("follow_reply_message", "感谢关注！"),
+<<<<<<< HEAD
                     no_focus_hf=account.get("no_focus_hf", False),
+=======
+>>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
                     poll_interval=5,
                 )
                 self.bots.append(bot)
@@ -125,14 +128,21 @@ class BotManager:
                 plugin.unload()
 
 class SimpleBilibiliReply:
+<<<<<<< HEAD
     def __init__(self, account_name, sessdata, bili_jct, self_uid, device_id, keywords, at_user, auto_focus, poll_interval=5, auto_reply_follow=False, follow_reply_message="感谢关注！", no_focus_hf = False):
+=======
+    def __init__(self, account_name, sessdata, bili_jct, self_uid, device_id, keywords, at_user, auto_focus, poll_interval=5, auto_reply_follow=False, follow_reply_message="感谢关注！"):
+>>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
         self.account_name = account_name
         self.sessdata = sessdata
         self.bili_jct = bili_jct
         self.self_uid = self_uid
         self.poll_interval = poll_interval
         self.running = False
+<<<<<<< HEAD
         self.no_focus_hf = no_focus_hf
+=======
+>>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
         
         # 生成设备ID
         self.device_id = device_id
@@ -352,11 +362,15 @@ class SimpleBilibiliReply:
             return True
         else:
             print(f"{Fore.RED}✗ [{self.account_name}] 用户 {target_uid} 未关注您")
+<<<<<<< HEAD
             if self.no_focus_hf == True:
                 return True
             else:
                 return False
             
+=======
+            return False
+>>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
 
     def extract_message_content(self, message_data: Dict) -> Optional[str]:
         """从消息数据中提取文本内容"""
@@ -550,10 +564,17 @@ class SimpleBilibiliReply:
                     timestamp = last_msg.get("timestamp", 0)
                     receiver_id = last_msg.get("receiver_id")
                     
+<<<<<<< HEAD
                     if sender_uid == int(self.self_uid): # 判断是否是自己的消息
                         continue
                     
                     if not msg_id or msg_id in self.processed_msg_ids: # 判断是否已回复
+=======
+                    if sender_uid == int(self.self_uid):
+                        continue
+                    
+                    if not msg_id or msg_id in self.processed_msg_ids:
+>>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
                         continue
                     
                     current_time = int(time.time())

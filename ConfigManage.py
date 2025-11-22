@@ -102,6 +102,7 @@ class ConfigManager:
         if keyword in keywords:
             del keywords[keyword]
             self.set_account_keywords(account_index, keywords)
+<<<<<<< HEAD
     
     # 新增图片管理功能
     def get_images(self) -> List[Dict]:
@@ -132,6 +133,8 @@ class ConfigManager:
             if img.get("url") == image_url:
                 return img
         return {}
+=======
+>>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
 
 def base64_encode(text):
     """Base64编码字符串"""
@@ -141,4 +144,8 @@ def base64_encode(text):
 def base64_decode(encoded_text):
     """Base64解码字符串"""
     decoded_bytes = base64.b64decode(encoded_text)
+<<<<<<< HEAD
     return decoded_bytes.decode('utf-8')
+=======
+    return decoded_bytes.decode('utf-8')
+>>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54

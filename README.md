@@ -1,0 +1,98 @@
+# 哔哩哔哩私信关键词自动回复机器人 (Bilibili PrivateMessage Bot)
+
+## 如果喜欢的话记得点点star哦！
+
+## 插件功能使用方法
+
+web页面插件商店创建插件，打开vscode进行开发，存放目录为 `项目文件夹/plugins/bilibot_plugins_Name`
+
+插件商店提供demo示例插件，可供产靠
+
+发布插件方法：
+
+访问github网站并登录，创建新仓库名称格式为bilibot_plugins_名称
+
+然后将插件的代码同步上去，`main.py`为入口文件，package.json为插件信息
+
+plugin_dev.py为开发模块，用于提供便捷开发函数，可自行阅读
+
+欢迎各位积极提交插件，丰富插件商店
+
+## 概述
+
+Bilibili PrivateMessage Bot (后文简称BPMB) 这是一个基于Bilibili私信API开发的私信关键词自动回复机器人
+
+可设置多个关键词，对于没有自动回复的哔哩哔哩用户也可以实现自动回复
+
+对于没有关注的用户，我们会贴心的发送关注提醒，只有关注了我们才可以获取关键词的回复
+
+如果你觉得好的话可以给我点个Stars吗？
+
+功能
+
+- [x] 关键词自动回复
+
+- [x] at对方昵称
+
+- [x] 自动回关
+
+- [x] 账号多开
+
+- [x] 扫码登陆
+
+- [x] 发送图片消息及图库功能
+
+- [x] 关注自动回复
+      
+- [x] 插件系统
+
+## 参数配置
+
+一、手动填写
+
+1. SESSDATA
+`浏览器按下F12 -> 应用/application -> cookie -> https://message.bilibili.com -> SESSDATA`
+
+2. bili_jct
+`浏览器按下F12 -> 应用/application -> cookie -> https://message.bilibili.com -> bili_jct`
+
+3. UID
+在个人空间里面可以看到自己的UID
+
+4. Device_id 系统自动生成
+
+二、扫码登陆
+
+最新V1.0.6版本支持
+
+打开web面板，进行配置
+
+## 使用方式
+
+环境要求**Python3.12+**
+
+1. 下载源码到本地
+```bash
+git clone https://github.com/7Hello80/Bilibili_PrivateMessage_Bot
+```
+
+2. 安装所需的Python依赖
+```bash
+pip install requests uuid json psutil flask colorama distro qrcode
+```
+
+3. 启动服务
+```bash
+python3 web_panel.py / python web_panel.py
+```
+
+面板默认账号密码：admin / admin123
+
+## 打赏
+
+<div align="center">
+  <img alt="image" src="https://app.bzks.qzz.io/src/png/alipay-BJaNLw5H.png" />
+<img alt="image" src="https://app.bzks.qzz.io/src/png/vx-D_zisWkG.png" />
+</div>
+
+登录地址：http://localhost:5000

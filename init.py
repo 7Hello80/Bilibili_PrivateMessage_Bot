@@ -111,10 +111,13 @@ def init_manage():
                 account["follow_reply_message"] = "感谢关注！"
                 account_updated = True
             
+<<<<<<< HEAD
             if "no_focus_hf" not in account:
                 account["no_focus_hf"] = False
                 account_updated = True
             
+=======
+>>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
             if account_updated:
                 updated = True
                 print(f"已更新账号 {i+1} 的配置结构")
@@ -145,7 +148,10 @@ def init_manage():
                     "auto_focus": False,
                     "auto_reply_follow": False,  # 新增
                     "follow_reply_message": "感谢关注！",  # 新增
+<<<<<<< HEAD
                     "no_focus_hf": False,
+=======
+>>>>>>> fa6b423cf3e7b6f1fab6cad2a5427ac3d5e4bc54
                     "enabled": True
                 }
             ],
