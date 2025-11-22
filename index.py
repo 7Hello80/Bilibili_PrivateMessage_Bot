@@ -31,7 +31,7 @@ else:
 
 config = ConfigManage.ConfigManager("config.json")
 
-version = "1.0.8"
+version = "1.0.9"
 
 # 初始化colorama
 colorama.init(autoreset=True)
