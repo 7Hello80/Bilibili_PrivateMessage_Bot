@@ -71,6 +71,8 @@ class PanelConfigManager:
                 "poll_interval": 5
             },
             "github": {
+                "client_id": "",
+                "client_secret": "",
                 "access_token": "",
                 "repo_owner": "7Hello80",
                 "repo_name": "Bilibili_PrivateMessage_Bot"
@@ -1256,8 +1258,8 @@ def toggle_plugin():
         return jsonify({'success': False, 'message': f'操作失败: {str(e)}'})
     
 # GitHub OAuth 配置
-GITHUB_CLIENT_ID = ConfigManage.base64_decode("T3YyM2xpdmh6dlpJeWxWU3hYMlg=")
-GITHUB_CLIENT_SECRET = ConfigManage.base64_decode("MmZmOTEyODFjOTUwOGY3OTU1OWU5Y2NjMDdlNjkxZjQ0ZjY1MzRjMQ==")
+GITHUB_CLIENT_ID = panel_config.get_github_config().get("client_id", "")
+GITHUB_CLIENT_SECRET = panel_config.get_github_config().get("client_secret", "")
 GITHUB_AUTHORIZE_URL = "https://github.com/login/oauth/authorize"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
 
@@ -1271,7 +1273,7 @@ def github_login():
     
     params = {
         'client_id': GITHUB_CLIENT_ID,
-        'redirect_uri': url_for('github_callback', _external=True),
+        'redirect_uri': "http://",
         'scope': 'public_repo,read:user',
         'state': state,
         'allow_signup': 'true'
@@ -2295,6 +2297,10 @@ def create_templates():
                         </div>
                     </div>
                     <div class="flex space-x-3">
+                        <button onclick="showGitHubConfigModal()" 
+                                class="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 focus:outline-none focus:ring-2 focus:ring-gray-500 transition flex items-center">
+                            <i class="fa fa-cog mr-2"></i>配置
+                        </button>
                         <button id="github-login-btn" onclick="githubLogin()" 
                                 class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 transition flex items-center hidden">
                             <i class="fab fa-github mr-2"></i>登录GitHub
