@@ -3815,6 +3815,7 @@ def create_templates():
                                 1. 在GitHub设置中创建OAuth App<br>
                                 2. Authorization callback URL填写: <code class="bg-blue-100 px-1 rounded">http://你的域名/github/callback</code><br>
                                 3. 将获取的Client ID和Client Secret填入上方
+                                4. 教程：https://cloud.tencent.com/developer/article/1663102
                             </p>
                         </div>
                     </div>
