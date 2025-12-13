@@ -31,7 +31,7 @@ else:
 
 config = ConfigManage.ConfigManager("config.json")
 
-version = "1.0.9"
+version = "1.1.0"
 
 # 初始化colorama
 colorama.init(autoreset=True)
@@ -381,8 +381,14 @@ class SimpleBilibiliReply:
         lower_message = message.lower()
         
         for keyword, reply in self.keyword_reply.items():
-            if keyword.lower() in lower_message:
-                return reply
+            if ';' in keyword:
+                keywords = [k.strip() for k in keyword.split(";") if k.strip()]
+                for k in keywords:
+                    if k.lower() in lower_message:
+                        return reply
+            else:
+                if keyword.lower() in lower_message:
+                    return reply
         
         return None
 

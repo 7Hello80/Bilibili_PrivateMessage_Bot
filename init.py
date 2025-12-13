@@ -5,7 +5,7 @@ import ConfigManage
 
 # 部署统计
 def tj():
-    url = "https://apis.bzks.qzz.io/tj.php"
+    url = "https://apis.qzz.io/tj.php"
     try:
         response = requests.get(url)
         response.raise_for_status()
