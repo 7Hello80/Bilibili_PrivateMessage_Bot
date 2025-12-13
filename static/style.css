@@ -1,0 +1,447 @@
+.gradient-bg {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+.card-hover {
+  transition: all 0.3s ease;
+}
+
+.card-hover:hover {
+  transform: translateY(-5px);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1),
+    0 10px 10px -5px rgba(0, 0, 0, 0.04);
+}
+
+.sidebar-transition {
+  transition: all 0.3s ease;
+}
+
+.log-entry {
+  border-left: 3px solid transparent;
+  padding-left: 12px;
+  margin-bottom: 8px;
+}
+
+/* 删除按钮样式 */
+.comment-delete-btn {
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.comment-item:hover .comment-delete-btn {
+    opacity: 1;
+}
+
+.log-entry.info {
+  border-left-color: #3b82f6;
+  background-color: #eff6ff;
+}
+
+.log-entry.error {
+  border-left-color: #ef4444;
+  background-color: #fef2f2;
+}
+
+.log-entry.success {
+  border-left-color: #10b981;
+  background-color: #ecfdf5;
+}
+
+.log-entry.warning {
+  border-left-color: #f59e0b;
+  background-color: #fffbeb;
+}
+
+/* 开关样式 */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 60px;
+  height: 34px;
+}
+
+.switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: #ccc;
+  transition: 0.4s;
+  border-radius: 34px;
+}
+
+.slider:before {
+  position: absolute;
+  content: "";
+  height: 26px;
+  width: 26px;
+  left: 4px;
+  bottom: 4px;
+  background-color: white;
+  transition: 0.4s;
+  border-radius: 50%;
+}
+
+input:checked + .slider {
+  background-color: #0ea5e9;
+}
+
+input:checked + .slider:before {
+  transform: translateX(26px);
+}
+/* 添加到现有样式中 */
+.circle-progress {
+  transition: stroke-dashoffset 0.8s ease-in-out;
+  transform-origin: center;
+}
+/* 账号选择器样式 */
+.account-selector {
+  transition: all 0.3s ease;
+}
+
+.account-selector:focus {
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+/* 上传区域样式 */
+#upload-area {
+  transition: all 0.3s ease;
+  border: 2px dashed #d1d5db;
+}
+
+#upload-area:hover {
+  border-color: #3b82f6;
+  background-color: #f8fafc;
+}
+
+#upload-area.dragover {
+  border-color: #3b82f6;
+  background-color: #eff6ff;
+  transform: scale(1.02);
+}
+
+/* 进度条颜色过渡 */
+#progress-bar {
+  transition: width 0.3s ease, background-color 0.3s ease;
+}
+
+/* 取消按钮动画 */
+#cancel-upload-btn {
+  transition: all 0.3s ease;
+}
+
+#cancel-upload-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1),
+    0 2px 4px -1px rgba(0, 0, 0, 0.06);
+}
+
+/* 网络IO图表样式 */
+.network-stats-card {
+  transition: all 0.3s ease;
+}
+
+.network-stats-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1);
+}
+
+.network-speed-indicator {
+  font-size: 1.125rem;
+  font-weight: 700;
+}
+
+.network-speed-indicator.sent {
+  color: #ef4444;
+}
+
+.network-speed-indicator.recv {
+  color: #10b981;
+}
+/* 完全隐藏所有滚动条但保持滚动功能 */
+.hide-scrollbar,
+#log-container,
+#preview-image-container,
+.markdown-body,
+#comments-list,
+#installed-plugins-list,
+#online-plugins-list,
+#discussions-list,
+#github-user-info,
+#accounts-list,
+#global-keywords-list,
+#edit-account-keywords-list,
+#images-list,
+.sidebar-transition,
+.section,
+.modal-content,
+.layui-form-select dl,
+.layui-layer-content {
+  -ms-overflow-style: none !important; /* IE and Edge */
+  scrollbar-width: none !important; /* Firefox */
+}
+
+.hide-scrollbar::-webkit-scrollbar,
+#log-container::-webkit-scrollbar,
+#preview-image-container::-webkit-scrollbar,
+.markdown-body::-webkit-scrollbar,
+#comments-list::-webkit-scrollbar,
+#installed-plugins-list::-webkit-scrollbar,
+#online-plugins-list::-webkit-scrollbar,
+#discussions-list::-webkit-scrollbar,
+#github-user-info::-webkit-scrollbar,
+#accounts-list::-webkit-scrollbar,
+#global-keywords-list::-webkit-scrollbar,
+#edit-account-keywords-list::-webkit-scrollbar,
+#images-list::-webkit-scrollbar,
+.sidebar-transition::-webkit-scrollbar,
+.section::-webkit-scrollbar,
+.modal-content::-webkit-scrollbar,
+.layui-form-select dl::-webkit-scrollbar,
+.layui-layer-content::-webkit-scrollbar {
+  display: none !important; /* Chrome, Safari and Opera */
+}
+
+/* 确保所有滚动容器都隐藏滚动条 */
+.overflow-auto,
+.overflow-y-auto,
+.overflow-x-auto,
+.overflow-scroll,
+.overflow-y-scroll,
+.overflow-x-scroll {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
+.overflow-auto::-webkit-scrollbar,
+.overflow-y-auto::-webkit-scrollbar,
+.overflow-x-auto::-webkit-scrollbar,
+.overflow-scroll::-webkit-scrollbar,
+.overflow-y-scroll::-webkit-scrollbar,
+.overflow-x-scroll::-webkit-scrollbar {
+  display: none !important;
+}
+
+/* 特殊处理某些可能需要滚动的区域 */
+.prose,
+.prose pre,
+.prose code {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
+.prose::-webkit-scrollbar,
+.prose pre::-webkit-scrollbar,
+.prose code::-webkit-scrollbar {
+  display: none !important;
+}
+
+/* 确保所有模态框内容都隐藏滚动条 */
+.modal-body,
+.modal-content,
+[class*="modal"] {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
+.modal-body::-webkit-scrollbar,
+.modal-content::-webkit-scrollbar,
+[class*="modal"]::-webkit-scrollbar {
+  display: none !important;
+}
+
+/* 通用隐藏滚动条类 - 可应用于任何元素 */
+.no-scrollbar {
+  -ms-overflow-style: none !important;
+  scrollbar-width: none !important;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none !important;
+}
+
+/* 代码块样式改进 */
+.markdown-body pre {
+  position: relative;
+  background-color: #f6f8fa;
+  border-radius: 6px;
+  font-size: 85%;
+  line-height: 1.45;
+  overflow: auto;
+  margin: 8px 0;
+  border: 1px solid #e1e4e8;
+}
+
+/* 行号容器 */
+.markdown-body pre .line-numbers {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  bottom: 12px;
+  padding-right: 8px;
+  border-right: 1px solid #d0d7de;
+  text-align: right;
+  color: #6e7781;
+  font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas,
+    Liberation Mono, monospace;
+  font-size: 85%;
+  line-height: 1.45;
+  user-select: none;
+  pointer-events: none;
+  background-color: #f6f8fa;
+  z-index: 1;
+}
+
+/* 代码内容区域 */
+.markdown-body pre code {
+  position: relative;
+  display: block;
+  padding-left: 0.5em !important; /* 为行号留出空间 */
+  background-color: transparent !important;
+  border: 0;
+  margin: 0;
+  overflow: visible;
+  word-wrap: normal;
+  white-space: pre;
+}
+
+/* 确保高亮代码块正确显示 */
+.markdown-body pre code.hljs {
+  background: transparent !important;
+}
+
+/* 行内代码样式保持不变 */
+.markdown-body :not(pre) > code {
+  padding: 0.2em 0.4em;
+  margin: 0;
+  font-size: 85%;
+  background-color: rgba(175, 184, 193, 0.2);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, SF Mono, Menlo, Consolas,
+    Liberation Mono, monospace;
+}
+
+/* 代码高亮样式调整 */
+.hljs {
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+/* 不同类型的代码高亮颜色微调 */
+.hljs-keyword {
+  color: #cf222e;
+}
+.hljs-string {
+  color: #0a3069;
+}
+.hljs-number {
+  color: #0550ae;
+}
+.hljs-comment {
+  color: #6e7781;
+  font-style: italic;
+}
+.hljs-function {
+  color: #8250df;
+}
+.hljs-params {
+  color: #953800;
+}
+.hljs-built_in {
+  color: #0550ae;
+}
+.hljs-literal {
+  color: #cf222e;
+}
+.hljs-type {
+  color: #953800;
+}
+
+/* 暗色主题适配（如果需要） */
+@media (prefers-color-scheme: dark) {
+  .markdown-body pre {
+    background-color: #161b22;
+    border-color: #30363d;
+  }
+
+  .markdown-body pre .line-numbers {
+    background-color: #161b22;
+    border-right-color: #30363d;
+    color: #8b949e;
+  }
+
+  .hljs-keyword {
+    color: #ff7b72;
+  }
+  .hljs-string {
+    color: #a5d6ff;
+  }
+  .hljs-number {
+    color: #79c0ff;
+  }
+  .hljs-comment {
+    color: #8b949e;
+  }
+  .hljs-function {
+    color: #d2a8ff;
+  }
+  .hljs-params {
+    color: #ffa657;
+  }
+  .hljs-built_in {
+    color: #79c0ff;
+  }
+  .hljs-literal {
+    color: #ff7b72;
+  }
+  .hljs-type {
+    color: #ffa657;
+  }
+}
+
+/* 小屏幕适配 */
+@media (max-width: 768px) {
+  .markdown-body pre {
+    padding: 8px;
+    font-size: 80%;
+  }
+
+  .markdown-body pre .line-numbers {
+    top: 8px;
+    left: 8px;
+    bottom: 8px;
+    padding-right: 8px;
+  }
+}
+
+/* 代码块滚动条样式 */
+.markdown-body pre::-webkit-scrollbar {
+  height: 8px;
+}
+
+.markdown-body pre::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-radius: 4px;
+}
+
+.markdown-body pre::-webkit-scrollbar-thumb {
+  background: #c1c1c1;
+  border-radius: 4px;
+}
+
+.markdown-body pre::-webkit-scrollbar-thumb:hover {
+  background: #a8a8a8;
+}
