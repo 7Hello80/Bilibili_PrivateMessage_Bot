@@ -1,7 +1,5 @@
 # 哔哩哔哩私信关键词自动回复机器人 (Bilibili PrivateMessage Bot)
 
-## 如果喜欢的话记得点点star哦！
-
 ## 插件功能使用方法
 
 web页面插件商店创建插件，打开vscode进行开发，存放目录为 `项目文件夹/plugins/bilibot_plugins_Name`
@@ -66,6 +64,8 @@ Bilibili PrivateMessage Bot (后文简称BPMB) 这是一个基于Bilibili私信A
 最新V1.0.6版本支持
 
 打开web面板，进行配置
+
+## 如果喜欢的话记得点点star哦！
 
 ## 使用方式
 
