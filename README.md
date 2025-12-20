@@ -90,9 +90,8 @@ python3 web_panel.py / python web_panel.py
 
 登录地址：http://localhost:5000
 
-## 打赏
+# 如果可以的话可以请我喝杯咖啡吗？
 
-<div align="center">
-  <img alt="image" src="https://app.bzks.qzz.io/src/png/alipay-BJaNLw5H.png" />
-  <img alt="image" src="https://app.bzks.qzz.io/src/png/vx-D_zisWkG.png" />
-</div>
+| 微信 | 支付宝 |
+| ----- | ----- |
+| <img src="./image/vx.png" alt="微信" width="320" height="420"></img> | <img src="./image/alipay.jpg" alt="支付宝" width="320" height="420"></img> |
