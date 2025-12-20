@@ -65,7 +65,7 @@ Bilibili PrivateMessage Bot (后文简称BPMB) 这是一个基于Bilibili私信A
 
 打开web面板，进行配置
 
-## 如果喜欢的话记得点点star哦！
+**如果喜欢的话记得点点 ✨star 哦！**
 
 ## 使用方式
 
