@@ -78,7 +78,7 @@ git clone https://github.com/7Hello80/Bilibili_PrivateMessage_Bot
 
 2. 安装所需的Python依赖
 ```bash
-pip install requests uuid json psutil flask colorama distro qrcode
+pip install -r requirements.txt
 ```
 
 3. 启动服务
