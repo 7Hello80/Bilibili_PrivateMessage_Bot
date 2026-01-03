@@ -38,7 +38,7 @@ UPDATE_CHECK_URL = "aHR0cDovLzExNC4xMzQuMTg4LjE4OD9pZD0x"
 Version = "2.0.4"
 system_name = platform.system()
 system_version = platform.version()
-disk_default = "/"
+disk_default = "/mnt"
 
 if system_name == "Linux":
     #获取linux发行版名称
@@ -1071,6 +1071,65 @@ def login():
             return render_template('login.html', error='用户名或密码错误')
     
     return render_template('login.html')
+
+@app.route('/api/login', methods=['POST'])
+def api_login():
+    """API登录接口"""
+    # 支持JSON和form两种格式
+    if request.is_json:
+        data = request.get_json()
+        username = data.get('username') if data else None
+        password = data.get('password') if data else None
+    else:
+        username = request.args.get('username')
+        password = request.args.get('password')
+    
+    if not username or not password:
+        return jsonify({'success': False, 'error': '用户名和密码不能为空'}), 400
+    
+    admin_creds = panel_config.get_admin_credentials()
+    
+    if (username == admin_creds.get('username') and 
+        check_password_hash(admin_creds.get('password'), password)):
+        # 设置session（与Web版完全相同）
+        session['logged_in'] = True
+        session['username'] = username
+        log_handler.add_log(f"用户 {username} 通过API登录成功")
+        
+        return jsonify({
+            'success': True,
+            'message': '登录成功',
+            'user': {'username': username}
+        }), 200
+    else:
+        log_handler.add_log(f"API登录失败 - 用户名: {username}")
+        return jsonify({
+            'success': False,
+            'error': '用户名或密码错误'
+        }), 401
+
+@app.route('/api/logout', methods=['POST'])
+def api_logout():
+    """API注销接口"""
+    username = session.get('username', '未知用户')
+    session.clear()
+    log_handler.add_log(f"用户 {username} 通过API注销")
+    
+    return jsonify({
+        'success': True,
+        'message': '注销成功'
+    }), 200
+
+@app.route('/api/check', methods=['GET'])
+def api_check():
+    """检查登录状态"""
+    if 'logged_in' in session and session['logged_in']:
+        return jsonify({
+            'logged_in': True,
+            'user': {'username': session.get('username')}
+        }), 200
+    else:
+        return jsonify({'logged_in': False}), 200
 
 @app.route("/error", methods=['GET', 'POST'])
 def Error():
