@@ -33,7 +33,7 @@ from github import Github
 # 导入现有的配置管理
 import ConfigManage
 
-CURRENT_VERSION = "MS4xLjA="
+CURRENT_VERSION = "MS4xLjE="
 UPDATE_CHECK_URL = "aHR0cDovLzExNC4xMzQuMTg4LjE4OD9pZD0x"
 Version = "2.0.4"
 system_name = platform.system()
