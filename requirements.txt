@@ -8,3 +8,4 @@ werkzeug
 psutil
 qrcode
 distro
+pillow
