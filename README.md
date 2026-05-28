@@ -96,20 +96,20 @@ Bilibili PrivateMessage Bot (BPMB) 是一个基于 Bilibili 私信 API 开发的
 
 ### 安装步骤
 
-#### 1️⃣ 克隆项目
+#### 1. 克隆项目
 
 ```bash
 git clone https://github.com/7Hello80/Bilibili_PrivateMessage_Bot
 cd Bilibili_PrivateMessage_Bot
 ```
 
-#### 2️⃣ 安装依赖
+#### 2. 安装依赖
 
 ```bash
 pip install -r requirements.txt
 ```
 
-#### 3️⃣ 启动服务
+#### 3. 启动服务
 
 ```bash
 # Linux/Mac
@@ -119,7 +119,7 @@ python3 web_panel.py
 python web_panel.py
 ```
 
-#### 4️⃣ 访问控制面板
+#### 4. 访问控制面板
 
 打开浏览器访问：**http://localhost:5000**
 
