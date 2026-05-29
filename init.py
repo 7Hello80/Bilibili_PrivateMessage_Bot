@@ -29,7 +29,10 @@ def init_manage():
                         "sessdata": "",
                         "bili_jct": "",
                         "self_uid": 0,
-                        "device_id": ""
+                        "device_id": "",
+                        "DedeUserID": "",
+                        "DedeUserID__ckMd5": "",
+                        "sid": ""
                     },
                     "keyword": {
                         "测试运行": "自动回复系统正常！"
@@ -68,7 +71,10 @@ def init_manage():
                     "sessdata": "",
                     "bili_jct": "",
                     "self_uid": 0,
-                    "device_id": ""
+                    "device_id": "",
+                    "DedeUserID": "",
+                    "DedeUserID__ckMd5": "",
+                    "sid": ""
                 }
                 account_updated = True
             else:
@@ -86,7 +92,16 @@ def init_manage():
                 if "device_id" not in config_fields:
                     config_fields["device_id"] = ""
                     account_updated = True
-            
+                if "DedeUserID" not in config_fields:
+                    config_fields["DedeUserID"] = ""
+                    account_updated = True
+                if "DedeUserID__ckMd5" not in config_fields:
+                    config_fields["DedeUserID__ckMd5"] = ""
+                    account_updated = True
+                if "sid" not in config_fields:
+                    config_fields["sid"] = ""
+                    account_updated = True
+                
             if "keyword" not in account:
                 account["keyword"] = {}
                 account_updated = True
@@ -136,7 +151,10 @@ def init_manage():
                         "sessdata": "",
                         "bili_jct": "",
                         "self_uid": 0,
-                        "device_id": ""
+                        "device_id": "",
+                        "DedeUserID": "",
+                        "DedeUserID__ckMd5": "",
+                        "sid": ""
                     },
                     "keyword": {
                         "测试运行": "自动回复系统正常！"

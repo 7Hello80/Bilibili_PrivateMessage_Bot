@@ -31,7 +31,7 @@ else:
 
 config = ConfigManage.ConfigManager("config.json")
 
-version = "1.1.1"
+version = "1.1.2"
 
 # 初始化colorama
 colorama.init(autoreset=True)
@@ -71,6 +71,9 @@ class BotManager:
                     sessdata=account["config"]["sessdata"],
                     bili_jct=account["config"]["bili_jct"],
                     self_uid=account["config"]["self_uid"],
+                    DedeUserID=account["config"]["DedeUserID"],
+                    DedeUserID__ckMd5=account["config"]["DedeUserID__ckMd5"],
+                    sid=account["config"]["sid"],
                     device_id=account["config"]["device_id"],
                     keywords=account.get("keyword", {}),
                     at_user=account.get("at_user", False),
@@ -124,8 +127,47 @@ class BotManager:
             if plugin.instance:
                 plugin.unload()
 
+def get_bili_fingerprint():
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://www.bilibili.com/",
+    }
+
+    # 1. 获取 buvid3 和 buvid4
+    spi_url = "https://api.bilibili.com/x/frontend/finger/spi"
+    resp = requests.get(spi_url, headers=headers, timeout=10)
+    resp.raise_for_status()
+    spi_data = resp.json()
+    if spi_data.get("code") != 0:
+        raise Exception(f"SPI 接口返回错误: {spi_data.get('message')}")
+
+    buvid3 = spi_data["data"]["b_3"]
+    buvid4 = spi_data["data"]["b_4"]
+
+    # 2. 获取 b_nut（不带任何 Cookie，这样 b_nut 就是当前的 UNIX 时间戳）
+    home_url = "https://www.bilibili.com/"
+    # 优先用 HEAD 请求，更轻量
+    resp_home = requests.head(home_url, headers=headers, timeout=10)
+    resp_home.raise_for_status()
+
+    b_nut = resp_home.cookies.get("b_nut")
+    if not b_nut:
+        # 极少数情况下 HEAD 可能被特殊处理，再尝试 GET
+        resp_home = requests.get(home_url, headers=headers, timeout=10)
+        resp_home.raise_for_status()
+        b_nut = resp_home.cookies.get("b_nut")
+
+    if not b_nut:
+        raise Exception("未从首页获取到 b_nut")
+
+    return {
+        "buvid3": buvid3,
+        "buvid4": buvid4,
+        "b_nut": b_nut,
+    }
+
 class SimpleBilibiliReply:
-    def __init__(self, account_name, sessdata, bili_jct, self_uid, device_id, keywords, at_user, auto_focus, poll_interval=5, auto_reply_follow=False, follow_reply_message="感谢关注！", no_focus_hf = False):
+    def __init__(self, account_name, sessdata, bili_jct, self_uid, DedeUserID, DedeUserID__ckMd5, sid, device_id, keywords, at_user, auto_focus, poll_interval=5, auto_reply_follow=False, follow_reply_message="感谢关注！", no_focus_hf = False):
         self.account_name = account_name
         self.sessdata = sessdata
         self.bili_jct = bili_jct
@@ -139,14 +181,20 @@ class SimpleBilibiliReply:
 
         self.plugin_loader = None
         
+        # 获取buvid
+        buvid_ = get_bili_fingerprint()
+        buvid3 = buvid_.get("buvid3")
+        buvid4 = buvid_.get("buvid4")
+        b_nut = buvid_.get("b_nut")
+        
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
             "Accept": "*/*",
-            "Accept-Language": "zh-CN,zh;q=0.9",
+            "Accept-Language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
             "Content-Type": "application/x-www-form-urlencoded",
             "Origin": "https://message.bilibili.com",
             "Referer": "https://message.bilibili.com/",
-            "Cookie": f"SESSDATA={sessdata}; bili_jct={bili_jct}; bili_ticket={bili_ticket.get()}"
+            "Cookie": f"buvid3={buvid3}; b_nut={b_nut}; _uuid=271105662-5D1D-838F-C3AA-9FA89931AE2F71147infoc; buvid_fp=c85d7430ab74a8d9373709446c0f08f0; home_feed_column=4; browser_resolution=1280-2332; SESSDATA={sessdata}; bili_jct={bili_jct}; DedeUserID={DedeUserID}; DedeUserID__ckMd5={DedeUserID__ckMd5}; sid={sid}; theme-tip-show=SHOWED; theme-avatar-tip-show=SHOWED; bsource=search_bing; buvid4={buvid4}; bili_ticket={bili_ticket.get()}; b_lsid=E731DD32_19E6CCF5122"
         }
         
         # 设置自动回复关键词（账号特定 + 全局）
@@ -205,10 +253,13 @@ class SimpleBilibiliReply:
         }
         try:
             response = requests.get(api, params=params, headers=self.headers, timeout=10)
+            with open("a.txt", "w") as f:
+                f.write(response.text())
             if response.status_code == 200:
                 data = response.json()
                 if data.get("code") == 0:
                     followers = data.get("data", {}).get("list", [])
+                    print("用户已关注")
                     return followers
                 else:
                     print(f"{Fore.RED}✗ [{self.account_name}] 获取粉丝列表API错误: {data.get('message')}")
@@ -416,7 +467,7 @@ class SimpleBilibiliReply:
             'msg[msg_type]': '1',
             'msg[msg_status]': '0',
             'msg[content]': json.dumps(content_json),
-            'msg[new_face_version]': '1',
+            'msg[new_face_version]': '0',
             'msg[canal_token]': '',
             'msg[dev_id]': self.device_id,
             'msg[timestamp]': str(timestamp),
@@ -457,7 +508,7 @@ class SimpleBilibiliReply:
                     if data.get("code") in [-400, 1000]:
                         return True
             else:
-                print(f"{Fore.RED}✗ [{self.account_name}] HTTP错误: {Fore.MAGENTA}{response.status_code}")
+                print(f"{Fore.RED}✗ [{self.account_name}] HTTP错误: {Fore.MAGENTA}{response.status_code}{response.json().get('message')}")
                 
         except Exception as e:
             print(f"{Fore.RED}✗ [{self.account_name}] 发送消息异常: {Fore.MAGENTA}{e}")

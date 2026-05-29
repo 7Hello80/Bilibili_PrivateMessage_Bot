@@ -38,7 +38,7 @@ UPDATE_CHECK_URL = "aHR0cDovLzExNC4xMzQuMTg4LjE4OD9pZD0x"
 Version = "2.0.4"
 system_name = platform.system()
 system_version = platform.version()
-disk_default = "/"
+disk_default = "/mnt"
 
 if system_name == "Linux":
     #获取linux发行版名称
@@ -49,7 +49,7 @@ else:
 init.init_manage()
 
 app = Flask(__name__)
-app.secret_key = 'bilibili_bot_panel_secret_key_2024'
+app.secret_key = 'AepOrtcOteq18763HHytqxj!jsb586uqsh'
 
 # 面板配置
 PANEL_CONFIG_FILE = "panel_config.json"
@@ -590,7 +590,10 @@ def add_account():
                 "sessdata": account_data.get("sessdata", ""),
                 "bili_jct": account_data.get("bili_jct", ""),
                 "self_uid": account_data.get("self_uid", 0),
-                "device_id": account_data.get("device_id", str(uuid.uuid4()).upper())
+                "device_id": account_data.get("device_id", str(uuid.uuid4()).upper()),
+                "DedeUserID": account_data.get("DedeUserID", ""),
+                "DedeUserID__ckMd5": account_data.get("DedeUserID__ckMd5", ""),
+                "sid": account_data.get("sid", "")
             },
             "keyword": account_data.get("keywords", {}),
             "at_user": account_data.get("at_user", False),
@@ -761,7 +764,10 @@ def update_account(account_index):
                 "sessdata": account_data.get("sessdata", ""),
                 "bili_jct": account_data.get("bili_jct", ""),
                 "self_uid": account_data.get("self_uid", 0),
-                "device_id": account_data.get("device_id", "")
+                "device_id": account_data.get("device_id", ""),
+                "DedeUserID": account_data.get("DedeUserID", ""),
+                "DedeUserID__ckMd5": account_data.get("DedeUserID__ckMd5", ""),
+                "sid": account_data.get("sid", "")
             },
             "keyword": existing_keywords,  # 保留原有的关键词，不覆盖
             "at_user": account_data.get("at_user", False),
@@ -1006,6 +1012,9 @@ def qrcode_status():
             cookies_dict = session.cookies.get_dict()
             sessdata = cookies_dict.get('SESSDATA')
             bili_jct = cookies_dict.get('bili_jct')
+            DedeUserID = cookies_dict.get("DedeUserID")
+            DedeUserID__ckMd5 = cookies_dict.get("DedeUserID__ckMd5")
+            sid = cookies_dict.get("sid")
             
             if not sessdata or not bili_jct:
                 log_handler.add_log(f"登录成功但未获取到Cookie", "ERROR")
@@ -1035,7 +1044,10 @@ def qrcode_status():
                     "sessdata": sessdata,
                     "bili_jct": bili_jct,
                     "mid": mid,
-                    "uname": uname
+                    "uname": uname,
+                    "DedeUserID": DedeUserID,
+                    "DedeUserID__ckMd5": DedeUserID__ckMd5,
+                    "sid": sid
                 }
             })
         elif status_code == 86101:
@@ -3381,6 +3393,25 @@ def create_templates():
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 mb-2">DEVICE_ID</label>
                                 <input type="text" name="device_id" required
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
+                                       value="">
+                            </div>
+                            
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">DedeUserID</label>
+                                <input type="text" name="DedeUserID" required
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
+                                       value="">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">DedeUserID__ckMd5</label>
+                                <input type="text" name="DedeUserID__ckMd5" required
+                                       class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
+                                       value="">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-2">SID</label>
+                                <input type="text" name="sid" required
                                        class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500 transition"
                                        value="">
                             </div>
