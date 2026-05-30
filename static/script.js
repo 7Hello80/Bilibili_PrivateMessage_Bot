@@ -2294,6 +2294,10 @@ function startQrcodePolling(qrcodeKey) {
                     document.querySelector('input[name="sessdata"]').value = data.data.sessdata || '';
                     document.querySelector('input[name="bili_jct"]').value = data.data.bili_jct || '';
                     document.querySelector('input[name="self_uid"]').value = data.data.mid || '';
+                    document.querySelector('input[name="DedeUserID"]').value = data.data.DedeUserID || '';
+                    document.querySelector('input[name="DedeUserID__ckMd5"]').value = data.data.DedeUserID__ckMd5 || '';
+                    document.querySelector('input[name="sid"]').value = data.data.sid || '';
+                    
                     
                     document.getElementById('qrcode-status').innerHTML = 
                         `<span class="text-green-600">登录成功！用户信息已自动填充</span>`;
