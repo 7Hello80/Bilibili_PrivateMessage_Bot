@@ -1,8 +1,0 @@
-distro
-colorama
-qrcode
-requests
-psutil
-werkzeug
-flask
-threading
