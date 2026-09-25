@@ -1,7 +1,7 @@
 {
     "admin": {
         "username": "admin",
-        "password": "使用面板修改密码后自动生成(pbkdf2哈希), 初始密码 admin123 请及时修改"
+        "password": "admin123"
     },
     "bot_settings": {
         "poll_interval": 5
