@@ -171,36 +171,7 @@ python web_panel.py
 
 ## 🔌 插件开发
 
-### 插件功能使用方法
-
-#### 创建插件
-
-1. 在 Web 页面插件商店中创建新插件
-2. 使用 VS Code 进行开发
-3. 插件存放目录：`项目文件夹/plugins/bilibot_plugins_Name`
-
-#### 插件结构
-
-```
-bilibot_plugins_插件名称/
-├── main.py          # 插件入口文件
-├── package.json     # 插件信息配置
-└── plugin_dev.py    # 开发辅助模块
-```
-
-#### 发布插件
-
-1. 访问 GitHub 并登录
-2. 创建新仓库，名称格式：`bilibot_plugins_名称`
-3. 将插件代码同步到仓库
-4. `main.py` 为入口文件
-5. `package.json` 为插件信息文件
-
-#### 开发参考
-
-- 插件商店提供 demo 示例插件供参考
-- `plugin_dev.py` 提供便捷开发函数
-- 欢迎各位积极提交插件，丰富插件生态
+![开发文档](/插件开发文档.md)
 
 ---
 
