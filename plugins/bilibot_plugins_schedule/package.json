@@ -1,0 +1,13 @@
+{
+    "name": "bilibot_plugins_schedule",
+    "version": "1.0.0",
+    "description": "定时任务插件：按配置定时给指定用户发送提醒消息，支持 !tasks 命令查看任务",
+    "author": "淡意往事",
+    "type": "event",
+    "repository": "",
+    "license": "MIT",
+    "enabled": true,
+    "load_order": 20,
+    "dependencies": [],
+    "bypass_follow_check": false
+}

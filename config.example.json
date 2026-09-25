@@ -1,0 +1,29 @@
+{
+    "accounts": [
+        {
+            "name": "默认账号",
+            "config": {
+                "sessdata": "",
+                "bili_jct": "",
+                "self_uid": 0,
+                "device_id": "",
+                "DedeUserID": "",
+                "DedeUserID__ckMd5": "",
+                "sid": ""
+            },
+            "keyword": {
+                "测试运行": "自动回复系统正常！"
+            },
+            "at_user": false,
+            "auto_focus": false,
+            "auto_reply_follow": false,
+            "follow_reply_message": "感谢关注！",
+            "no_focus_hf": false,
+            "enabled": true
+        }
+    ],
+    "global_keywords": {
+        "测试运行": "自动回复系统正常！"
+    },
+    "images": []
+}

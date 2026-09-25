@@ -1,0 +1,13 @@
+{
+    "name": "bilibot_plugins_stats",
+    "version": "1.0.0",
+    "description": "消息统计插件：记录每条收到的消息，提供 !stats 命令、API 接口和面板指标展示",
+    "author": "淡意往事",
+    "type": "analysis",
+    "repository": "",
+    "license": "MIT",
+    "enabled": true,
+    "load_order": 10,
+    "dependencies": [],
+    "bypass_follow_check": false
+}

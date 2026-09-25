@@ -1,0 +1,16 @@
+{
+    "admin": {
+        "username": "admin",
+        "password": "使用面板修改密码后自动生成(pbkdf2哈希), 初始密码 admin123 请及时修改"
+    },
+    "bot_settings": {
+        "poll_interval": 5
+    },
+    "github": {
+        "access_token": "",
+        "repo_owner": "你的GitHub用户名",
+        "repo_name": "仓库名",
+        "client_id": "",
+        "client_secret": ""
+    }
+}

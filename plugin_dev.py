@@ -3,6 +3,7 @@ import time
 import logging
 import requests
 import threading
+from logging.handlers import RotatingFileHandler
 from typing import Dict, List, Any, Callable, Optional, Union
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta
@@ -11,11 +12,31 @@ import hashlib
 import os
 
 class PluginLogger:
-    """插件专用日志记录器"""
-    
+    """插件专用日志记录器(同时落盘到 plugins/<name>/plugin.log)"""
+
     def __init__(self, plugin_name: str):
         self.plugin_name = plugin_name
         self.logger = logging.getLogger(f"plugin.{plugin_name}")
+        # 避免重复添加 handler(重载插件时会重新实例化)
+        log_path = os.path.abspath(os.path.join("plugins", plugin_name, "plugin.log"))
+        if not any(isinstance(h, RotatingFileHandler) and
+                   os.path.abspath(getattr(h, 'baseFilename', '') or '') == log_path
+                   for h in self.logger.handlers):
+            try:
+                log_dir = os.path.join("plugins", plugin_name)
+                os.makedirs(log_dir, exist_ok=True)
+                handler = RotatingFileHandler(
+                    log_path, maxBytes=512 * 1024, backupCount=2, encoding='utf-8')
+                handler.setFormatter(logging.Formatter(
+                    '%(asctime)s [%(levelname)s] %(message)s'))
+                self.logger.addHandler(handler)
+                # 不向 root 传播, 避免与其他日志重复; 插件日志统一落盘
+                self.logger.propagate = False
+                # 让 DEBUG 及以上级别都能写入插件日志文件
+                self.logger.setLevel(logging.DEBUG)
+            except Exception as e:
+                logging.error(f"插件 {plugin_name} 日志文件初始化失败: {str(e)}")
+                self.logger.propagate = True
     
     def info(self, message: str):
         """信息日志"""
@@ -66,12 +87,21 @@ class PluginConfig:
     def get(self, key: str, default=None):
         """获取配置值"""
         return self._config.get(key, default)
-    
+
+    def get_all(self) -> Dict[str, Any]:
+        """获取全部配置(返回拷贝, 修改不影响内部状态)"""
+        return dict(self._config)
+
     def set(self, key: str, value: Any):
         """设置配置值"""
         self._config[key] = value
         return self.save_config()
-    
+
+    def update(self, values: Dict[str, Any]) -> bool:
+        """批量更新配置(merge)"""
+        self._config.update(values or {})
+        return self.save_config()
+
     def delete(self, key: str):
         """删除配置项"""
         if key in self._config:
@@ -94,6 +124,20 @@ class PluginDatabase:
     def get_connection(self):
         """获取数据库连接"""
         return sqlite3.connect(self.db_file)
+
+    def __enter__(self):
+        """上下文管理器: with db as conn: 自动提交/回滚并关闭"""
+        self._conn = self.get_connection()
+        return self._conn
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            if exc_type is None:
+                self._conn.commit()
+            else:
+                self._conn.rollback()
+        finally:
+            self._conn.close()
     
     def execute(self, sql: str, params: tuple = ()):
         """执行SQL语句"""
@@ -200,10 +244,28 @@ class PluginHTTPClient:
     def get(self, url: str, **kwargs):
         """GET请求"""
         return self._request('GET', url, **kwargs)
-    
+
     def post(self, url: str, **kwargs):
         """POST请求"""
         return self._request('POST', url, **kwargs)
+
+    def get_json(self, url: str, **kwargs):
+        """GET请求并解析 JSON(失败返回 None)"""
+        try:
+            response = self.get(url, **kwargs)
+            return response.json()
+        except Exception as e:
+            logging.error(f"插件 {self.plugin_name} GET JSON 失败: {str(e)}")
+            return None
+
+    def post_json(self, url: str, **kwargs):
+        """POST请求并解析 JSON(失败返回 None)"""
+        try:
+            response = self.post(url, **kwargs)
+            return response.json()
+        except Exception as e:
+            logging.error(f"插件 {self.plugin_name} POST JSON 失败: {str(e)}")
+            return None
     
     def _request(self, method: str, url: str, **kwargs):
         """发送请求"""
@@ -216,47 +278,55 @@ class PluginHTTPClient:
             raise
 
 class PluginScheduler:
-    """插件任务调度器"""
-    
+    """插件任务调度器(基于 Event 可真正停止)"""
+
     def __init__(self, plugin_name: str):
         self.plugin_name = plugin_name
         self.timers = []
-    
+        self._stop_event = threading.Event()
+
     def schedule_interval(self, interval: int, func: Callable, *args, **kwargs):
-        """定时执行任务"""
+        """定时执行任务(先执行一次, 之后每 interval 秒执行)"""
+        stop_event = self._stop_event
+
         def wrapper():
-            while True:
+            while not stop_event.is_set():
                 try:
                     func(*args, **kwargs)
                 except Exception as e:
                     logging.error(f"插件 {self.plugin_name} 定时任务执行失败: {str(e)}")
-                time.sleep(interval)
-        
+                # 用 wait 代替 sleep, 停止时立即响应
+                stop_event.wait(interval)
+
         thread = threading.Thread(target=wrapper, daemon=True)
         thread.start()
         self.timers.append(thread)
         return thread
-    
+
     def schedule_once(self, delay: int, func: Callable, *args, **kwargs):
         """延迟执行任务"""
+        stop_event = self._stop_event
+
         def wrapper():
-            time.sleep(delay)
+            if stop_event.wait(delay):
+                return  # 已被停止, 不再执行
             try:
                 func(*args, **kwargs)
             except Exception as e:
                 logging.error(f"插件 {self.plugin_name} 延迟任务执行失败: {str(e)}")
-        
+
         thread = threading.Thread(target=wrapper, daemon=True)
         thread.start()
         self.timers.append(thread)
         return thread
-    
+
     def stop_all(self):
-        """停止所有任务"""
-        for timer in self.timers:
+        """停止所有任务(Event 通知 + 最多等待 2 秒)"""
+        self._stop_event.set()
+        for timer in list(self.timers):
             if timer.is_alive():
-                # 无法直接停止线程，但可以设置标志位
-                pass
+                timer.join(timeout=2)
+        self.timers.clear()
 
 class PluginUtils:
     """插件工具类"""
@@ -295,6 +365,17 @@ class PluginUtils:
             size /= 1024.0
         return f"{size:.2f} TB"
 
+    @staticmethod
+    def parse_version(version: str) -> tuple:
+        """解析版本号 '1.2.3' -> (1, 2, 3), 非法返回 (0,). 用于版本比较"""
+        if not version:
+            return (0,)
+        try:
+            parts = tuple(int(part) for part in str(version).split('.') if part.isdigit())
+            return parts if parts else (0,)
+        except (TypeError, ValueError):
+            return (0,)
+
 # 增强的插件基类 - 统一所有基础功能
 class PluginBase(ABC):
     """插件基类 - 提供完整的开发工具"""
@@ -321,7 +402,10 @@ class PluginBase(ABC):
         self.event_handlers = {}
         self.api_routes = {}
         self.metrics = {}
-        
+
+        # 是否绕过"必须关注才能回复"检查(package.json 中配置)
+        self.bypass_follow_check = bool(self.plugin_config.get('bypass_follow_check', False))
+
         self.logger.info(f"插件工具类初始化完成")
     
     @abstractmethod
@@ -347,6 +431,11 @@ class PluginBase(ABC):
             'description': description
         }
         self.logger.info(f"注册命令: {command} - {description}")
+
+    def get_commands_help(self) -> List[tuple]:
+        """获取已注册命令的 (命令名, 描述) 列表, 供 !help 聚合"""
+        return [(cmd, info.get('description', ''))
+                for cmd, info in self.command_handlers.items()]
     
     def process_message(self, message_data: Dict[str, Any]) -> Optional[str]:
         """处理消息"""
@@ -405,7 +494,16 @@ class PluginBase(ABC):
         self.logger.info(f"注册API路由: {path} - {methods}")
     
     def handle_api_request(self, path: str, method: str, data: Any = None) -> Any:
-        """处理API请求"""
+        """处理API请求(path 会自动规范化: 去前导/、拆 query)"""
+        if not path:
+            return None
+        # 规范化路径: 去前导 / 与 query 部分
+        path = path.strip()
+        if '?' in path:
+            path = path.split('?', 1)[0]
+        while path.startswith('/'):
+            path = path[1:]
+        path = '/' + path if path else '/'
         if path in self.api_routes:
             route = self.api_routes[path]
             if method in route['methods']:
@@ -447,13 +545,21 @@ class PluginBase(ABC):
         if self.bot_manager and hasattr(self.bot_manager, 'bots'):
             return self.bot_manager.bots
         return []
-    
+
     def send_message(self, receiver_id: int, message: str, account_index: int = 0):
         """发送消息"""
         accounts = self.get_bot_accounts()
         if account_index < len(accounts):
             return accounts[account_index].send_message(receiver_id, message)
         return False
+
+    def reply(self, message_data: Dict[str, Any], text: str, account_index: int = 0):
+        """快捷回复: 向触发消息的发送者发送文本"""
+        receiver_id = message_data.get('talker_id') or message_data.get('sender_uid')
+        if not receiver_id:
+            self.logger.error("回复失败: 消息数据缺少发送者ID")
+            return False
+        return self.send_message(receiver_id, text, account_index)
     
     def get_user_info(self, user_id: int, account_index: int = 0):
         """获取用户信息"""

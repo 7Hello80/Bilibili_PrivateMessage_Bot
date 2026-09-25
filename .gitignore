@@ -205,3 +205,25 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# ===== 项目敏感配置与运行时文件(严禁提交) =====
+# B站账号凭证 / 面板凭据
+config.json
+panel_config.json
+# IPC 运行时文件
+plugin_status.json
+plugin_control.json
+# 运行日志
+bot_runtime.log
+# 调试残留
+a.txt
+# 备份压缩包(可能含旧版凭证)
+*.tar.gz
+plugin_backups/
+# 插件运行时数据(日志/数据库/缓存)
+plugins/*/plugin.log
+plugins/*/*.db
+plugins/*/cache.json
+# 私有插件(用户自用, 不公开)
+plugins/redeem_code/
+plugins/bilibot_plugins_redeem_code/

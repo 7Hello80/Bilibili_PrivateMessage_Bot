@@ -1,0 +1,13 @@
+{
+    "name": "bilibot_plugins_autoreply",
+    "version": "1.0.0",
+    "description": "增强自动回复插件：可配置关键词规则 + 每个用户冷却时间防刷屏，无需关注即可回复",
+    "author": "淡意往事",
+    "type": "message",
+    "repository": "",
+    "license": "MIT",
+    "enabled": true,
+    "load_order": 30,
+    "dependencies": [],
+    "bypass_follow_check": true
+}

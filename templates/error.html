@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="min-h-screen bg-gray-50 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
+    <div class="max-w-md w-full space-y-8">
+        <div class="bg-white py-8 px-6 shadow rounded-xl sm:px-10 border border-gray-100">
+            <!-- 错误图标 -->
+            <div class="text-center mb-8">
+                <div class="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-red-100">
+                    <i class="fa fa-exclamation-triangle text-red-600 text-2xl"></i>
+                </div>
+                <h2 class="mt-4 text-3xl font-bold text-gray-900">
+                    发生错误
+                </h2>
+            </div>
+
+            <!-- 错误信息 -->
+            <div class="text-center">
+                <p class="text-lg text-gray-600 mb-6">
+                    {{ error }}
+                </p>
+                
+                <!-- 操作按钮 -->
+                <div class="space-y-4">
+                    <a href="/" class="w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
+                        <i class="fa fa-home mr-2"></i>返回首页
+                    </a>
+                    
+                    <button onclick="history.back()" class="w-full flex justify-center py-3 px-4 border border-gray-300 text-sm font-medium rounded-lg text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500 transition">
+                        <i class="fa fa-arrow-left mr-2"></i>返回上页
+                    </button>
+                </div>
+                
+                <!-- 技术支持 -->
+                <div class="mt-6 pt-6 border-t border-gray-200">
+                    <p class="text-sm text-gray-500">
+                        如果问题持续存在，请联系技术支持
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

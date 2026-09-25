@@ -16,6 +16,7 @@ import io
 import wbi
 import bili_ticket
 from plugin_loader import plugin_loader
+import plugin_bridge
 
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
@@ -31,7 +32,7 @@ else:
 
 config = ConfigManage.ConfigManager("config.json")
 
-version = "1.1.2"
+version = "1.1.1"
 
 # 初始化colorama
 colorama.init(autoreset=True)
@@ -59,11 +60,10 @@ class BotManager:
         """启动所有启用的机器人"""
         if self.running:
             return False
-            
+
         self.running = True
-        plugin_loader.load_all_plugins()
         accounts = config.get_accounts()
-        
+
         for i, account in enumerate(accounts):
             if account.get("enabled", True):
                 bot = SimpleBilibiliReply(
@@ -84,48 +84,74 @@ class BotManager:
                     poll_interval=5,
                 )
                 self.bots.append(bot)
-                
+
+                # 先注入插件加载器再启动线程(避免竞态)
+                if self.plugin_loader:
+                    bot.set_plugin_loader(self.plugin_loader)
+
                 # 在新线程中启动机器人
                 thread = threading.Thread(target=bot.run, daemon=True)
                 thread.start()
-                
-        print(f"{Fore.GREEN}✓ 已启动 {len(self.bots)} 个机器人实例")
 
-        if self.plugin_loader:
-            for bot in self.bots:
-                bot.set_plugin_loader(self.plugin_loader)
+        print(f"{Fore.GREEN}✓ 已启动 {len(self.bots)} 个机器人实例")
 
         if self.plugin_loader:
             print(f"{Fore.BLUE}正在加载插件...")
             try:
-                # 重新设置依赖，传入真实的 bots
+                # 设置依赖，传入真实的 bots
                 self.plugin_loader.set_dependencies(self, config)
-                
-                # 加载所有插件
+
+                # 加载所有插件(幂等, 不重复实例化)
                 success = self.plugin_loader.load_all_plugins()
                 if success:
                     loaded_plugins = [p for p in self.plugin_loader.get_all_plugins() if p.instance]
                     print(f"{Fore.GREEN}✓ 已加载 {len(loaded_plugins)} 个插件")
-                    
+
                     # 打印已加载的插件信息
                     for plugin in loaded_plugins:
                         print(f"{Fore.CYAN}  - {plugin.name} (v{plugin.metadata.get('version', '1.0.0')})")
                 else:
                     print(f"{Fore.YELLOW}⚠ 插件加载过程中出现问题")
+
+                # 启动面板桥接(控制命令轮询 + 插件API服务器)
+                try:
+                    bridge = plugin_bridge.get_bridge()
+                    bridge.start(self.plugin_loader, self)
+                    print(f"{Fore.CYAN}✓ 面板桥接已启动(插件API: 127.0.0.1:{plugin_bridge.API_PORT})")
+                except Exception as e:
+                    print(f"{Fore.YELLOW}⚠ 面板桥接启动失败(不影响机器人运行): {e}")
+
+                # 广播 bot_start 事件
+                self.plugin_loader.emit_event('bot_start', {
+                    'accounts': [b.account_name for b in self.bots],
+                    'time': time.time()
+                })
             except Exception as e:
                 print(f"{Fore.RED}✗ 插件加载失败: {e}")
         return True
-        
+
     def stop_all(self):
         """停止所有机器人"""
         self.running = False
+        # 先广播 bot_stop 事件, 再停桥接
+        if self.plugin_loader:
+            try:
+                self.plugin_loader.emit_event('bot_stop', {'time': time.time()})
+            except Exception as e:
+                print(f"{Fore.RED}✗ 广播 bot_stop 事件失败: {e}")
+            try:
+                plugin_bridge.get_bridge().shutdown()
+            except Exception as e:
+                print(f"{Fore.RED}✗ 停面板桥接失败: {e}")
         for bot in self.bots:
             bot.stop()
         self.bots.clear()
         print(f"{Fore.GREEN}✓ 已停止所有机器人实例")
-        for plugin in plugin_loader.get_all_plugins():
+        # 卸载所有插件
+        for plugin in list(self.plugin_loader.get_all_plugins()):
             if plugin.instance:
                 plugin.unload()
+        self.plugin_loader.plugins.clear()
 
 def get_bili_fingerprint():
     headers = {
@@ -209,9 +235,24 @@ class SimpleBilibiliReply:
         self.follow_reply_message = follow_reply_message
         
         self.processed_follow_ids = set()
-        
-        self.processed_msg_ids = set()
+
+        # msg_id -> 处理时间, 有界(防止内存无限增长)
+        self.processed_msg_ids = {}
         print(f"{Fore.GREEN}✓ {Fore.BLUE}[{self.account_name}] 哔哩哔哩私信自动回复机器人启动成功")
+
+    def _remember_msg(self, msg_id):
+        """记录已处理消息并清理过期条目(600秒前)与超量条目(上限2000)"""
+        now = time.time()
+        self.processed_msg_ids[msg_id] = now
+        # 删除 600 秒前的条目
+        expired = [mid for mid, t in self.processed_msg_ids.items() if now - t > 600]
+        for mid in expired:
+            del self.processed_msg_ids[mid]
+        # 超量时按时间删除最旧
+        if len(self.processed_msg_ids) > 2000:
+            oldest = sorted(self.processed_msg_ids.items(), key=lambda x: x[1])[:500]
+            for mid, _ in oldest:
+                del self.processed_msg_ids[mid]
     
     def stop(self):
         """停止机器人"""
@@ -253,8 +294,6 @@ class SimpleBilibiliReply:
         }
         try:
             response = requests.get(api, params=params, headers=self.headers, timeout=10)
-            with open("a.txt", "w") as f:
-                f.write(response.text())
             if response.status_code == 200:
                 data = response.json()
                 if data.get("code") == 0:
@@ -320,6 +359,14 @@ class SimpleBilibiliReply:
                 if success:
                     print(f"{Fore.GREEN}✓ [{self.account_name}] 已向新关注用户 {uname}({follower_uid}) 发送欢迎消息")
                     self.processed_follow_ids.add(follower_uid)
+                    # 广播 new_follower 事件
+                    if self.plugin_loader:
+                        self.plugin_loader.emit_event('new_follower', {
+                            'mid': follower_uid,
+                            'uname': uname,
+                            'account_name': self.account_name,
+                            'timestamp': time.time()
+                        })
                 else:
                     print(f"{Fore.RED}✗ [{self.account_name}] 向新关注用户 {uname}({follower_uid}) 发送消息失败")
                     
@@ -502,6 +549,14 @@ class SimpleBilibiliReply:
                 
                 if data.get("code") == 0:
                     print(f"{Fore.GREEN}✓ [{self.account_name}] 成功发送消息给 {Fore.MAGENTA}{receiver_id}")
+                    # 广播 message_sent 事件
+                    if self.plugin_loader:
+                        self.plugin_loader.emit_event('message_sent', {
+                            'receiver_id': receiver_id,
+                            'content': message,
+                            'account_name': self.account_name,
+                            'timestamp': time.time()
+                        })
                     return True
                 else:
                     print(f"{Fore.RED}✗ [{self.account_name}] 发送失败: {Fore.MAGENTA}{data.get('message')} (代码: {data.get('code')})")
@@ -576,6 +631,15 @@ class SimpleBilibiliReply:
                     
                     if data.get("code") == 0:
                         print(f"{Fore.GREEN}✓ [{self.account_name}] 成功发送图片给 {Fore.MAGENTA}{receiver_id}")
+                        # 广播 message_sent 事件
+                        if self.plugin_loader:
+                            self.plugin_loader.emit_event('message_sent', {
+                                'receiver_id': receiver_id,
+                                'content': image_message,
+                                'is_image': True,
+                                'account_name': self.account_name,
+                                'timestamp': time.time()
+                            })
                         return True
                     else:
                         print(f"{Fore.RED}✗ [{self.account_name}] 发送图片失败: {Fore.MAGENTA}{data.get('message')} (代码: {data.get('code')})")
@@ -623,16 +687,24 @@ class SimpleBilibiliReply:
                     
                     print(f"{Fore.GREEN}✓ [{self.account_name}] 收到来自 {Fore.MAGENTA}{talker_id} {Fore.GREEN}的消息: {Fore.MAGENTA}{message_text}")
 
-                    plugin_reply = None
+                    message_data = {
+                        'talker_id': talker_id,
+                        'sender_uid': sender_uid,
+                        'content': message_text,
+                        'timestamp': timestamp,
+                        'msg_id': msg_id,
+                        'account_name': self.account_name
+                    }
+
+                    # 广播 message_received 事件(在插件处理之前)
                     if self.plugin_loader:
-                        plugin_reply = self.process_message_with_plugins(message_text, {
-                            'talker_id': talker_id,
-                            'sender_uid': sender_uid,
-                            'content': message_text,
-                            'timestamp': timestamp,
-                            'msg_id': msg_id
-                        })
-                    
+                        self.plugin_loader.emit_event('message_received', message_data)
+
+                    plugin_reply = None
+                    reply_plugin = None
+                    if self.plugin_loader:
+                        plugin_reply, reply_plugin = self.process_message_with_plugins(message_text, message_data)
+
                     if plugin_reply:
                         reply = plugin_reply
                         print(f"{Fore.CYAN}  [{self.account_name}] 插件返回回复: {Fore.MAGENTA}{reply}")
@@ -641,25 +713,27 @@ class SimpleBilibiliReply:
                         reply = self.check_keywords(message_text)
 
                     if reply:
-                        if self.is_following_me(talker_id):
+                        # 插件可声明 bypass_follow_check 跳过关注检查
+                        bypass = bool(reply_plugin and getattr(reply_plugin, 'bypass_follow_check', False))
+                        if bypass or self.is_following_me(talker_id):
                             success = self.send_message(talker_id, reply)
-                            
+
                             if self.auto_focus:
                                 focus = self.Auto_focus(receiver_id)
                                 if focus == True:
                                     print(f"{Fore.GREEN}✓ [{self.account_name}] 关注成功")
                                 else:
                                     print(f"{Fore.RED}✗ [{self.account_name}] 关注失败，可能已关注对方")
-                            
+
                             if success:
-                                self.processed_msg_ids.add(msg_id)
+                                self._remember_msg(msg_id)
                                 print(f"{Fore.GREEN}✓ [{self.account_name}] 已处理消息 {Fore.MAGENTA}{msg_id}")
                             else:
                                 print(f"{Fore.RED}✗ [{self.account_name}] 发送消息失败")
                         else:
                             print(f"{Fore.RED}✗ [{self.account_name}] 用户 {talker_id} 未关注您，不发送回复")
-                            self.processed_msg_ids.add(msg_id)
-                            self.send_message(talker_id, "你还没有点点关注哦~，白嫖可耻！")
+                            self._remember_msg(msg_id)
+                            self.send_message(talker_id, "你还没有点点关注哦~，白嫖可耻！[自动回复系统]")
                             
                     
                 except Exception as e:
@@ -669,15 +743,23 @@ class SimpleBilibiliReply:
         except Exception as e:
             print(f"{Fore.RED}✗ [{self.account_name}] 处理消息主循环异常: {Fore.MAGENTA}{e}")
         
-    def process_message_with_plugins(self, message: str, message_data: dict) -> Optional[str]:
-        """使用插件处理消息"""
+    def process_message_with_plugins(self, message: str, message_data: dict):
+        """使用插件处理消息, 返回 (回复文本, 命中的插件实例) 元组"""
         if not self.plugin_loader:
-            return None
-            
+            return None, None
+
         try:
+            content = message_data.get('content', '').strip()
+
+            # 内置 !help 命令: 聚合所有插件的命令帮助
+            if content.lower() in ('!help', '!帮助', '！help', '！帮助'):
+                help_text = self.plugin_loader.get_help_text()
+                print(f"{Fore.CYAN}  [{self.account_name}] 响应插件帮助命令")
+                return help_text, None
+
             # 获取所有已加载的插件
             plugins = self.plugin_loader.get_all_plugins()
-            
+
             for plugin in plugins:
                 if plugin.enabled and plugin.instance:
                     # 检查插件是否有消息处理能力
@@ -686,14 +768,14 @@ class SimpleBilibiliReply:
                             result = plugin.instance.process_message(message_data)
                             if result:
                                 print(f"{Fore.CYAN}  [{self.account_name}] 插件 {plugin.name} 处理了消息")
-                                return result
+                                return result, plugin.instance
                         except Exception as e:
                             print(f"{Fore.RED}✗ [{self.account_name}] 插件 {plugin.name} 处理消息失败: {e}")
-            
-            return None
+
+            return None, None
         except Exception as e:
             print(f"{Fore.RED}✗ [{self.account_name}] 插件消息处理异常: {e}")
-            return None
+            return None, None
 
     def run(self):
         """运行监听"""

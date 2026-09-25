@@ -3,6 +3,9 @@ let layuiForm = null;
 let currentPluginSearchKeyword = '';
 let installedPlugins = [];
 let onlinePlugins = [];
+let botRunning = false;           // 机器人进程是否在运行
+let pluginDetailName = null;      // 当前打开详情的插件名
+let pluginDetailData = null;      // 当前插件详情数据缓存
 
 // 配置marked选项（如果还没有配置的话）
 if (typeof marked !== 'undefined') {
@@ -75,6 +78,7 @@ function loadInstalledPlugins() {
         .then(data => {
             if (data.success) {
                 installedPlugins = data.plugins;
+                botRunning = !!data.bot_running;
                 updateInstalledPluginsList();
             } else {
                 showNotification('加载插件列表失败', 'error');
@@ -86,7 +90,7 @@ function loadInstalledPlugins() {
         });
 }
 
-// 更新已安装插件列表
+// 更新已安装插件列表(状态徽章: 运行中/未加载/已禁用/失败/机器人未运行)
 function updateInstalledPluginsList() {
     const container = document.getElementById('installed-plugins-list');
     if (!container) return;
@@ -102,35 +106,71 @@ function updateInstalledPluginsList() {
         return;
     }
 
-    container.innerHTML = installedPlugins.map(plugin => `
+    container.innerHTML = installedPlugins.map(plugin => {
+        // 状态徽章逻辑
+        let statusBadge = '';
+        let statusDot = 'bg-gray-400';
+        if (!botRunning) {
+            statusBadge = '<span class="text-sm px-2 py-1 bg-gray-100 text-gray-600 rounded">机器人未运行</span>';
+        } else if (plugin.error) {
+            statusBadge = `<span class="text-sm px-2 py-1 bg-red-100 text-red-700 rounded cursor-pointer"
+                onclick="showPluginError('${plugin.name.replace(/'/g, "\\'")}', '${(plugin.error || '').replace(/'/g, "\\'").replace(/\n/g, ' ')}')">加载失败</span>`;
+            statusDot = 'bg-red-500';
+        } else if (plugin.loaded) {
+            statusBadge = '<span class="text-sm px-2 py-1 bg-green-100 text-green-800 rounded">运行中</span>';
+            statusDot = 'bg-green-500';
+        } else if (plugin.enabled) {
+            statusBadge = '<span class="text-sm px-2 py-1 bg-yellow-100 text-yellow-800 rounded">未加载</span>';
+            statusDot = 'bg-yellow-500';
+        } else {
+            statusBadge = '<span class="text-sm px-2 py-1 bg-gray-100 text-gray-600 rounded">已禁用</span>';
+        }
+
+        const updateBtn = plugin.has_update
+            ? `<button onclick="updatePlugin('${plugin.name}')"
+                    class="px-3 py-1 text-sm bg-orange-600 hover:bg-orange-700 text-white rounded transition">
+                    <i class="fa fa-arrow-up mr-1"></i>更新 v${plugin.latest_version || ''}
+               </button>`
+            : '';
+
+        return `
         <div class="border border-gray-200 rounded-lg p-4 mb-4 bg-white hover:bg-gray-50 transition">
-            <div class="flex items-center justify-between mb-3">
-                <div class="flex items-center space-x-3">
-                    <div class="w-3 h-3 rounded-full ${plugin.enabled ? 'bg-green-500' : 'bg-gray-400'}"></div>
+            <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
+                <div class="flex items-center space-x-3 flex-wrap gap-2">
+                    <div class="w-3 h-3 rounded-full ${statusDot}"></div>
                     <h4 class="text-lg font-medium text-gray-800">${plugin.metadata.name}</h4>
                     <span class="text-sm px-2 py-1 bg-blue-100 text-blue-800 rounded">v${plugin.metadata.version}</span>
-                    ${plugin.loaded ? '<span class="text-sm px-2 py-1 bg-green-100 text-green-800 rounded">已加载</span>' : ''}
+                    ${statusBadge}
                 </div>
-                <div class="flex items-center space-x-2">
-                    <button onclick="togglePlugin('${plugin.name}', ${!plugin.enabled})" 
+                <div class="flex items-center space-x-2 flex-wrap gap-2">
+                    <button onclick="togglePlugin('${plugin.name}', ${!plugin.enabled})"
                             class="px-3 py-1 text-sm ${plugin.enabled ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-green-600 hover:bg-green-700'} text-white rounded transition">
                         ${plugin.enabled ? '禁用' : '启用'}
                     </button>
-                    <button onclick="reloadPlugin('${plugin.name}')" 
+                    <button onclick="reloadPlugin('${plugin.name}')"
                             class="px-3 py-1 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded transition">
                         重载
                     </button>
-                    <button onclick="uninstallPlugin('${plugin.name}')" 
+                    <button onclick="openPluginDetail('${plugin.name}')"
+                            class="px-3 py-1 text-sm bg-purple-600 hover:bg-purple-700 text-white rounded transition">
+                        详情
+                    </button>
+                    <button onclick="backupPlugin('${plugin.name}')"
+                            class="px-3 py-1 text-sm bg-teal-600 hover:bg-teal-700 text-white rounded transition">
+                        备份
+                    </button>
+                    ${updateBtn}
+                    <button onclick="uninstallPlugin('${plugin.name}')"
                             class="px-3 py-1 text-sm bg-red-600 hover:bg-red-700 text-white rounded transition">
                         卸载
                     </button>
                 </div>
             </div>
-            
+
             <div class="text-sm text-gray-600 mb-3">
                 ${plugin.metadata.description || '暂无描述'}
             </div>
-            
+
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                 <div>
                     <span class="text-gray-600">作者:</span>
@@ -141,23 +181,32 @@ function updateInstalledPluginsList() {
                     <span class="ml-2 font-medium">${plugin.metadata.type || 'base'}</span>
                 </div>
                 <div>
-                    <span class="text-gray-600">加载顺序:</span>
-                    <span class="ml-2 font-medium">${plugin.metadata.load_order || 0}</span>
+                    <span class="text-gray-600">命令:</span>
+                    <span class="ml-2 font-medium">${(plugin.commands || []).map(c => '!' + c[0]).join(' ') || '无'}</span>
                 </div>
             </div>
-            
+
             ${plugin.metadata.dependencies && plugin.metadata.dependencies.length > 0 ? `
             <div class="mt-3 pt-3 border-t border-gray-200">
                 <h5 class="text-sm font-medium text-gray-700 mb-2">依赖:</h5>
                 <div class="flex flex-wrap gap-1">
                     ${plugin.metadata.dependencies.map(dep => `
-                        <span class="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs">${dep}</span>
+                        <span class="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs">${typeof dep === 'string' ? dep : (dep.name || '')}</span>
                     `).join('')}
                 </div>
             </div>
             ` : ''}
         </div>
-    `).join('');
+        `;
+    }).join('');
+}
+
+// 显示插件加载失败详情
+function showPluginError(name, error) {
+    layer.alert(error || '加载失败', {
+        icon: 2,
+        title: `插件 ${name} 加载失败原因`
+    });
 }
 
 // 搜索插件
@@ -309,7 +358,7 @@ function getPluginList() {
 
 // 安装插件
 function installPlugin(repoFullName, pluginName) {
-    layer.confirm(`确定要安装插件 "${pluginName}" 吗？`, {
+    layer.confirm(`确定要安装插件 "${pluginName}" 吗？<br><span style="color:#dc2626;font-size:12px;">⚠ 插件以代码形式运行且与机器人同进程，请只安装可信来源的插件</span>`, {
         icon: 3,
         title: '确认安装'
     }, function(index) {
@@ -323,7 +372,7 @@ function installPlugin(repoFullName, pluginName) {
         })
         .then(response => response.json())
         .then(data => {
-            showNotification(data.message, data.success ? 'success' : 'error');
+            showNotification(data.message, data.success ? (data.bot_not_running ? 'warning' : 'success') : 'error');
             if (data.success) {
                 loadInstalledPlugins();
                 // 重新搜索以更新安装状态
@@ -342,7 +391,7 @@ function installPlugin(repoFullName, pluginName) {
 
 // 卸载插件
 function uninstallPlugin(pluginName) {
-    layer.confirm(`确定要卸载插件 "${pluginName}" 吗？此操作不可恢复！`, {
+    layer.confirm(`确定要卸载插件 "${pluginName}" 吗？<br><span style="color:#6b7280;font-size:12px;">卸载前会自动备份，可在详情页恢复</span>`, {
         icon: 3,
         title: '确认卸载'
     }, function(index) {
@@ -382,7 +431,7 @@ function togglePlugin(pluginName, enable) {
     })
     .then(response => response.json())
     .then(data => {
-        showNotification(data.message, data.success ? 'success' : 'error');
+        showNotification(data.message, data.success ? (data.bot_not_running ? 'warning' : 'success') : 'error');
         if (data.success) {
             loadInstalledPlugins();
         }
@@ -402,7 +451,7 @@ function reloadPlugin(pluginName) {
     })
     .then(response => response.json())
     .then(data => {
-        showNotification(data.message, data.success ? 'success' : 'error');
+        showNotification(data.message, data.success ? (data.bot_not_running ? 'warning' : 'success') : 'error');
         if (data.success) {
             loadInstalledPlugins();
         }
@@ -427,6 +476,584 @@ function showCreatePluginModal() {
 
 function hideCreatePluginModal() {
     document.getElementById('create-plugin-modal').classList.add('hidden');
+}
+
+// ================= 插件详情 =================
+
+// 打开插件详情模态框
+function openPluginDetail(name) {
+    pluginDetailName = name;
+    pluginDetailData = null;
+    document.getElementById('plugin-detail-modal').classList.remove('hidden');
+    document.getElementById('plugin-detail-title').textContent = name;
+    document.getElementById('plugin-detail-version').textContent = '加载中...';
+    document.getElementById('plugin-detail-status-badge').textContent = '';
+    document.getElementById('plugin-detail-update-badge').classList.add('hidden');
+
+    fetch('/api/plugins/detail/' + encodeURIComponent(name))
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                showNotification(data.message || '获取插件详情失败', 'error');
+                return;
+            }
+            pluginDetailData = data;
+            renderPluginDetailInfo(data);
+        })
+        .catch(error => {
+            console.error('获取插件详情失败:', error);
+            showNotification('获取插件详情失败', 'error');
+        });
+
+    // 默认显示信息 tab
+    switchPluginTab('info');
+}
+
+// 渲染详情-信息 tab
+function renderPluginDetailInfo(data) {
+    const plugin = data.plugin || {};
+    const metadata = plugin.metadata || {};
+    const status = data.status || {};
+
+    document.getElementById('plugin-detail-version').textContent = 'v' + (metadata.version || '1.0.0');
+
+    // 状态徽章
+    const badge = document.getElementById('plugin-detail-status-badge');
+    if (!data.bot_running) {
+        badge.textContent = '机器人未运行';
+        badge.className = 'text-sm px-2 py-1 bg-gray-100 text-gray-600 rounded';
+    } else if (status.error) {
+        badge.textContent = '加载失败';
+        badge.className = 'text-sm px-2 py-1 bg-red-100 text-red-700 rounded';
+    } else if (status.loaded) {
+        badge.textContent = '运行中';
+        badge.className = 'text-sm px-2 py-1 bg-green-100 text-green-800 rounded';
+    } else if (metadata.enabled) {
+        badge.textContent = '未加载';
+        badge.className = 'text-sm px-2 py-1 bg-yellow-100 text-yellow-800 rounded';
+    } else {
+        badge.textContent = '已禁用';
+        badge.className = 'text-sm px-2 py-1 bg-gray-100 text-gray-600 rounded';
+    }
+
+    // 快捷操作按钮状态(启用/禁用)
+    const toggleBtn = document.getElementById('plugin-detail-toggle-btn');
+    if (toggleBtn) {
+        if (metadata.enabled) {
+            toggleBtn.textContent = '禁用';
+            toggleBtn.className = 'px-3 py-1 text-sm bg-yellow-600 hover:bg-yellow-700 text-white rounded transition';
+        } else {
+            toggleBtn.textContent = '启用';
+            toggleBtn.className = 'px-3 py-1 text-sm bg-green-600 hover:bg-green-700 text-white rounded transition';
+        }
+    }
+
+    // API 测试提示: 已注册路由
+    const routesHint = document.getElementById('plugin-api-routes-hint');
+    if (routesHint) {
+        routesHint.textContent = (status.api_routes || []).join('  ') || '无';
+    }
+
+    const infoEl = document.getElementById('plugin-detail-info');
+    const commands = (status.commands || []).map(c => `!${c[0]}${c[1] ? ' - ' + c[1] : ''}`).join('<br>') || '无';
+    const apiRoutes = (status.api_routes || []).map(r => `/api/plugins/api/${pluginDetailName}${r}`).join('<br>') || '无';
+    const backups = (data.backups || []);
+    const backupsHtml = backups.length > 0
+        ? backups.map(b => `
+            <div class="flex items-center justify-between py-1 px-2 bg-gray-50 rounded mb-1">
+                <span class="text-xs">${b.file} (${formatFileSize(b.size)})</span>
+                <button onclick="restorePlugin('${pluginDetailName}', '${b.file}')"
+                        class="px-2 py-0.5 text-xs bg-teal-600 text-white rounded hover:bg-teal-700">恢复</button>
+            </div>`).join('')
+        : '<span class="text-sm text-gray-400">暂无备份</span>';
+
+    infoEl.innerHTML = `
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+            <div><span class="text-gray-600">描述:</span>
+                <span class="ml-2 font-medium">${metadata.description || '暂无描述'}</span></div>
+            <div><span class="text-gray-600">作者:</span>
+                <span class="ml-2 font-medium">${metadata.author || '未知'}</span></div>
+            <div><span class="text-gray-600">类型:</span>
+                <span class="ml-2 font-medium">${metadata.type || 'base'}</span></div>
+            <div><span class="text-gray-600">加载顺序:</span>
+                <span class="ml-2 font-medium">${metadata.load_order || 0}</span></div>
+            <div><span class="text-gray-600">绕过关注检查:</span>
+                <span class="ml-2 font-medium">${metadata.bypass_follow_check ? '是' : '否'}</span></div>
+            <div><span class="text-gray-600">仓库:</span>
+                <span class="ml-2 font-medium">${metadata.repository || '未配置'}</span></div>
+        </div>
+        ${status.error ? `<div class="mt-3 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">加载失败原因: ${status.error}</div>` : ''}
+        <div class="mt-4 border-t border-gray-200 pt-3">
+            <h4 class="text-sm font-medium text-gray-700 mb-2">已注册命令</h4>
+            <div class="text-sm text-gray-600 bg-gray-50 rounded p-3">${commands}</div>
+        </div>
+        <div class="mt-3">
+            <h4 class="text-sm font-medium text-gray-700 mb-2">插件API路由</h4>
+            <div class="text-sm text-gray-600 bg-gray-50 rounded p-3">${apiRoutes}</div>
+        </div>
+        <div class="mt-3">
+            <div class="flex items-center justify-between mb-2">
+                <h4 class="text-sm font-medium text-gray-700">备份列表</h4>
+                <button onclick="backupPlugin('${pluginDetailName}')"
+                        class="px-3 py-1 text-sm bg-teal-600 text-white rounded hover:bg-teal-700">立即备份</button>
+            </div>
+            <div>${backupsHtml}</div>
+        </div>
+        <div class="mt-3 flex space-x-2">
+            <button onclick="checkPluginUpdate('${pluginDetailName}')"
+                    class="px-3 py-1 text-sm bg-orange-600 text-white rounded hover:bg-orange-700">检查更新</button>
+        </div>
+    `;
+}
+
+function hidePluginDetailModal() {
+    document.getElementById('plugin-detail-modal').classList.add('hidden');
+}
+
+// 详情页快捷启用/禁用
+function togglePluginFromDetail() {
+    if (!pluginDetailName || !pluginDetailData) return;
+    const enabled = pluginDetailData.plugin.metadata.enabled;
+    fetch('/api/plugins/toggle', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plugin_name: pluginDetailName, enabled: !enabled })
+    })
+    .then(response => response.json())
+    .then(data => {
+        showNotification(data.message, data.success ? (data.bot_not_running ? 'warning' : 'success') : 'error');
+        if (data.success) {
+            loadInstalledPlugins();
+            openPluginDetail(pluginDetailName);
+        }
+    })
+    .catch(error => {
+        console.error('切换插件状态失败:', error);
+        showNotification('切换插件状态失败', 'error');
+    });
+}
+
+// API 测试: 直接调用插件注册的 API 路由
+function testPluginApi() {
+    if (!pluginDetailName) return;
+    const pathEl = document.getElementById('plugin-api-path');
+    const path = (pathEl.value || '').trim();
+    if (!path) {
+        showNotification('请输入 API 路径', 'error');
+        return;
+    }
+    const method = document.getElementById('plugin-api-method').value;
+    const resultEl = document.getElementById('plugin-api-result');
+    resultEl.textContent = '请求中...';
+
+    const options = { method: method };
+    if (method === 'POST') {
+        options.headers = { 'Content-Type': 'application/json' };
+        const bodyText = document.getElementById('plugin-api-body').value.trim();
+        if (bodyText) {
+            try {
+                JSON.parse(bodyText);
+            } catch (e) {
+                showNotification('请求体 JSON 格式错误: ' + e.message, 'error');
+                return;
+            }
+            options.body = bodyText;
+        }
+    }
+    const fullPath = path.startsWith('/') ? path : '/' + path;
+    fetch('/api/plugins/api/' + encodeURIComponent(pluginDetailName) + fullPath, options)
+        .then(response => response.text())
+        .then(text => {
+            try {
+                resultEl.textContent = JSON.stringify(JSON.parse(text), null, 2);
+            } catch (e) {
+                resultEl.textContent = text;
+            }
+        })
+        .catch(error => {
+            resultEl.textContent = '请求失败: ' + error.message;
+        });
+}
+
+// 切换详情 tab(README 懒加载)
+function switchPluginTab(tab) {
+    // tab 高亮
+    document.querySelectorAll('.plugin-detail-tab').forEach(btn => {
+        const active = btn.getAttribute('data-plugin-tab') === tab;
+        btn.className = 'plugin-detail-tab px-4 py-2 text-sm font-medium ' +
+            (active ? 'text-blue-600 border-b-2 border-blue-600'
+                    : 'text-gray-600 hover:text-gray-800');
+    });
+    // 内容显示
+    document.querySelectorAll('.plugin-detail-content').forEach(el => el.classList.add('hidden'));
+    const target = document.getElementById('plugin-tab-' + tab);
+    if (target) target.classList.remove('hidden');
+
+    if (!pluginDetailName) return;
+    if (tab === 'readme' && pluginDetailData) {
+        document.getElementById('plugin-detail-readme').textContent =
+            pluginDetailData.readme || '暂无 README 内容';
+    } else if (tab === 'config') {
+        loadPluginConfigTab(pluginDetailName);
+    } else if (tab === 'logs') {
+        loadPluginLogs(pluginDetailName);
+    } else if (tab === 'metrics') {
+        loadPluginMetrics(pluginDetailName);
+    } else if (tab === 'apitest') {
+        // 刷新已注册路由提示
+        if (pluginDetailData) {
+            const hintEl = document.getElementById('plugin-api-routes-hint');
+            if (hintEl) {
+                hintEl.textContent = ((pluginDetailData.status || {}).api_routes || []).join('  ') || '无';
+            }
+        }
+    } else if (tab === 'source') {
+        loadPluginSourceFile(pluginDetailName);
+    }
+}
+
+// ================= 配置编辑 =================
+
+function loadPluginConfigTab(name) {
+    fetch('/api/plugins/config?plugin_name=' + encodeURIComponent(name))
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('plugin-config-editor').value =
+                    JSON.stringify(data.config, null, 2);
+                document.getElementById('plugin-config-error').classList.add('hidden');
+            } else {
+                showNotification(data.message || '加载配置失败', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('加载配置失败:', error);
+            showNotification('加载配置失败', 'error');
+        });
+}
+
+function savePluginConfig() {
+    if (!pluginDetailName) return;
+    const raw = document.getElementById('plugin-config-editor').value;
+    let config;
+    try {
+        config = JSON.parse(raw);
+    } catch (e) {
+        const errEl = document.getElementById('plugin-config-error');
+        errEl.textContent = 'JSON 格式错误: ' + e.message;
+        errEl.classList.remove('hidden');
+        return;
+    }
+    document.getElementById('plugin-config-error').classList.add('hidden');
+
+    fetch('/api/plugins/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plugin_name: pluginDetailName, config: config })
+    })
+    .then(response => response.json())
+    .then(data => {
+        showNotification(data.message, data.success
+            ? (data.bot_not_running ? 'warning' : 'success') : 'error');
+    })
+    .catch(error => {
+        console.error('保存配置失败:', error);
+        showNotification('保存配置失败', 'error');
+    });
+}
+
+// ================= 日志与指标 =================
+
+function loadPluginLogs(name) {
+    document.getElementById('plugin-detail-file-logs').textContent = '加载中...';
+    document.getElementById('plugin-detail-bot-logs').textContent = '加载中...';
+    fetch('/api/plugins/logs?plugin_name=' + encodeURIComponent(name))
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                document.getElementById('plugin-detail-file-logs').textContent =
+                    data.file_logs.length ? data.file_logs.join('\n') : '(暂无日志)';
+                document.getElementById('plugin-detail-bot-logs').textContent =
+                    data.bot_logs.length ? data.bot_logs.join('\n') : '(暂无相关日志)';
+            } else {
+                showNotification(data.message || '获取日志失败', 'error');
+            }
+        })
+        .catch(error => {
+            console.error('获取插件日志失败:', error);
+            showNotification('获取插件日志失败', 'error');
+        });
+}
+
+function loadPluginMetrics(name) {
+    const cardsEl = document.getElementById('plugin-detail-metric-cards');
+    const rawEl = document.getElementById('plugin-detail-metrics');
+    if (cardsEl) cardsEl.innerHTML = '<div class="text-gray-500 text-sm col-span-full">加载中...</div>';
+    if (rawEl) rawEl.textContent = '加载中...';
+    fetch('/api/plugins/metrics?plugin=' + encodeURIComponent(name))
+        .then(response => response.json())
+        .then(data => {
+            if (!data || !data.success) {
+                if (cardsEl) cardsEl.innerHTML = '<div class="text-gray-500 text-sm col-span-full">' +
+                    ((data && data.message) || '获取指标失败(机器人未运行?)') + '</div>';
+                if (rawEl) rawEl.textContent = '(无法获取指标)';
+                return;
+            }
+            const pluginData = (data.data || {})[name] || {};
+            const metrics = pluginData.metrics || {};
+            const entries = Object.entries(metrics);
+            if (cardsEl) {
+                cardsEl.innerHTML = entries.length
+                    ? entries.map(([k, v]) => `
+                        <div class="bg-gray-50 border border-gray-100 rounded-lg p-4">
+                            <div class="text-xs text-gray-500 break-all">${k}</div>
+                            <div class="text-lg font-semibold text-gray-800 mt-1 break-all">${typeof v === 'object' ? JSON.stringify(v) : v}</div>
+                        </div>`).join('')
+                    : '<div class="text-gray-400 text-sm col-span-full">该插件未注册指标</div>';
+            }
+            if (rawEl) rawEl.textContent = JSON.stringify(pluginData.dashboard || {}, null, 2);
+        })
+        .catch(error => {
+            console.error('获取插件指标失败:', error);
+            if (cardsEl) cardsEl.innerHTML = '<div class="text-red-500 text-sm col-span-full">获取指标失败</div>';
+            if (rawEl) rawEl.textContent = '获取指标失败';
+        });
+}
+
+// ================= 备份 / 恢复 / 更新 =================
+
+function backupPlugin(pluginName) {
+    fetch('/api/plugins/backup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plugin_name: pluginName })
+    })
+    .then(response => response.json())
+    .then(data => {
+        showNotification(data.message, data.success ? 'success' : 'error');
+        if (data.success && pluginDetailName === pluginName) {
+            openPluginDetail(pluginName);  // 刷新备份列表
+        }
+    })
+    .catch(error => {
+        console.error('备份插件失败:', error);
+        showNotification('备份插件失败', 'error');
+    });
+}
+
+function restorePlugin(pluginName, backupFile) {
+    layer.confirm(`确定要从备份 "${backupFile}" 恢复插件 "${pluginName}" 吗？当前版本将自动备份。`, {
+        icon: 3,
+        title: '确认恢复'
+    }, function(index) {
+        fetch('/api/plugins/restore', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plugin_name: pluginName, backup_file: backupFile })
+        })
+        .then(response => response.json())
+        .then(data => {
+            showNotification(data.message, data.success ? 'success' : 'error');
+            if (data.success) {
+                loadInstalledPlugins();
+                if (pluginDetailName === pluginName) openPluginDetail(pluginName);
+            }
+        })
+        .catch(error => {
+            console.error('恢复插件失败:', error);
+            showNotification('恢复插件失败', 'error');
+        });
+        layer.close(index);
+    });
+}
+
+function checkPluginUpdate(pluginName) {
+    showNotification('正在检查更新...', 'info');
+    fetch('/api/plugins/check_update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ plugin_name: pluginName })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (!data.success) {
+            showNotification(data.message || '检查更新失败', 'error');
+            return;
+        }
+        if (data.has_update) {
+            const badge = document.getElementById('plugin-detail-update-badge');
+            badge.textContent = `可更新到 v${data.latest_version}`;
+            badge.classList.remove('hidden');
+            showNotification(`发现新版本 v${data.latest_version}(当前 v${data.local_version})`, 'warning');
+        } else {
+            showNotification(data.message || '已是最新版本', 'success');
+        }
+    })
+    .catch(error => {
+        console.error('检查更新失败:', error);
+        showNotification('检查更新失败', 'error');
+    });
+}
+
+function updatePlugin(pluginName) {
+    layer.confirm(`确定要更新插件 "${pluginName}" 吗？更新前会自动备份当前版本。`, {
+        icon: 3,
+        title: '确认更新'
+    }, function(index) {
+        fetch('/api/plugins/update', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plugin_name: pluginName })
+        })
+        .then(response => response.json())
+        .then(data => {
+            showNotification(data.message, data.success ? 'success' : 'error');
+            if (data.success) loadInstalledPlugins();
+        })
+        .catch(error => {
+            console.error('更新插件失败:', error);
+            showNotification('更新插件失败', 'error');
+        });
+        layer.close(index);
+    });
+}
+
+// ================= 导入 / 全部重载 =================
+
+function importPluginZip(input) {
+    if (!input.files || !input.files.length) return;
+    const file = input.files[0];
+    const formData = new FormData();
+    formData.append('file', file);
+
+    layer.confirm(`确定要导入插件 "${file.name}" 吗？插件将以代码形式运行，请只导入可信来源！`, {
+        icon: 3,
+        title: '确认导入'
+    }, function(index) {
+        fetch('/api/plugins/import', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => response.json())
+        .then(data => {
+            showNotification(data.message, data.success ? 'success' : 'error');
+            if (data.success) loadInstalledPlugins();
+        })
+        .catch(error => {
+            console.error('导入插件失败:', error);
+            showNotification('导入插件失败', 'error');
+        });
+        layer.close(index);
+    });
+    input.value = '';
+}
+
+function reloadAllPlugins() {
+    layer.confirm('确定要重载全部插件吗？', {
+        icon: 3,
+        title: '确认重载'
+    }, function(index) {
+        fetch('/api/plugins/reload_all', { method: 'POST' })
+            .then(response => response.json())
+            .then(data => {
+                showNotification(data.message, data.success
+                    ? (data.bot_not_running ? 'warning' : 'success') : 'error');
+                if (data.success) loadInstalledPlugins();
+            })
+            .catch(error => {
+                console.error('重载全部插件失败:', error);
+                showNotification('重载全部插件失败', 'error');
+            });
+        layer.close(index);
+    });
+}
+
+// ================= 源码编辑 =================
+
+// 插件目录下可编辑文件缓存: {相对路径: 内容}
+let pluginSourceFiles = {};
+
+// 加载插件目录下的文件列表并填充下拉框(实际存在的文件, 非固定文件)
+function loadPluginSourceFile(name) {
+    if (!name) return;
+    fetch('/api/plugins/edit/' + encodeURIComponent(name))
+        .then(response => response.json())
+        .then(data => {
+            if (!data.success) {
+                showNotification(data.message || '加载源码失败', 'error');
+                return;
+            }
+            pluginSourceFiles = data.files || {};
+            const select = document.getElementById('plugin-source-file');
+            const names = Object.keys(pluginSourceFiles).sort();
+            if (names.length) {
+                select.innerHTML = names.map(f =>
+                    `<option value="${f}">${f}</option>`).join('');
+                // 默认选中 main.py
+                if (names.indexOf('main.py') >= 0) {
+                    select.value = 'main.py';
+                }
+            } else {
+                select.innerHTML = '<option value="">(无可编辑文件)</option>';
+            }
+            updateSourceEditor();
+            const skipped = data.skipped || [];
+            if (skipped.length) {
+                showNotification('以下大文件(>256KB)已跳过编辑: ' + skipped.join(', '), 'warning');
+            }
+        })
+        .catch(error => {
+            console.error('加载源码失败:', error);
+            showNotification('加载源码失败', 'error');
+        });
+}
+
+// 切换下拉框文件时更新编辑器内容
+function updateSourceEditor() {
+    const select = document.getElementById('plugin-source-file');
+    const editor = document.getElementById('plugin-source-editor');
+    if (!select || !editor) return;
+    const fname = select.value;
+    editor.value = (fname && pluginSourceFiles[fname] !== undefined)
+        ? pluginSourceFiles[fname] : '';
+    editor.readOnly = !fname;
+    const errEl = document.getElementById('plugin-source-error');
+    if (errEl) errEl.classList.add('hidden');
+}
+
+function savePluginSource() {
+    if (!pluginDetailName) return;
+    const select = document.getElementById('plugin-source-file');
+    const fname = select.value;
+    if (!fname) {
+        showNotification('没有可编辑的文件', 'error');
+        return;
+    }
+    const content = document.getElementById('plugin-source-editor').value;
+
+    fetch('/api/plugins/edit/' + encodeURIComponent(pluginDetailName), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file: fname, content: content })
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            pluginSourceFiles[fname] = content;  // 更新本地缓存
+            document.getElementById('plugin-source-error').classList.add('hidden');
+            showNotification(data.message, 'success');
+            loadInstalledPlugins();
+        } else {
+            const errEl = document.getElementById('plugin-source-error');
+            errEl.textContent = data.message || '保存失败';
+            errEl.classList.remove('hidden');
+            showNotification(data.message || '保存失败', 'error');
+        }
+    })
+    .catch(error => {
+        console.error('保存源码失败:', error);
+        showNotification('保存源码失败', 'error');
+    });
 }
 
 // 创建插件表单提交
@@ -3370,13 +3997,15 @@ function restartBot() {
 function showNotification(message, type = 'info') {
     // 创建通知元素
     const notification = document.createElement('div');
-    const bgColor = type === 'success' ? 'bg-green-500' : 
-                   type === 'error' ? 'bg-red-500' : 
+    const bgColor = type === 'success' ? 'bg-green-500' :
+                   type === 'error' ? 'bg-red-500' :
+                   type === 'warning' ? 'bg-yellow-500' :
                    'bg-blue-500';
-    const icon = type === 'success' ? 'fa-check' : 
-                type === 'error' ? 'fa-exclamation-triangle' : 
+    const icon = type === 'success' ? 'fa-check' :
+                type === 'error' ? 'fa-exclamation-triangle' :
+                type === 'warning' ? 'fa-exclamation' :
                 'fa-info';
-    
+
     notification.className = `fixed top-4 right-4 p-4 rounded-lg shadow-lg z-50 max-w-sm transform transition-transform duration-300 translate-x-full ${bgColor} text-white`;
     notification.innerHTML = `
         <div class="flex items-center">
