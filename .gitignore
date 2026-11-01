@@ -227,3 +227,10 @@ plugins/*/cache.json
 # 私有插件(用户自用, 不公开)
 plugins/redeem_code/
 plugins/bilibot_plugins_redeem_code/
+# 面板会话密钥(首次运行自动生成)
+.panel_secret
+# 本地临时/备份文件
+.tmp/
+.claude/
+*.bak
+*.bak[0-9]

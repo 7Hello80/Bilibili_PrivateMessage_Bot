@@ -1,67 +1,106 @@
 {% extends "base.html" %}
 
+{% block title %}登录 · B站私信机器人控制面板{% endblock %}
+
 {% block content %}
-<div class="min-h-screen bg-gray-50 flex items-center justify-center py-12 px-4 sm:px-6 lg:px-8">
-    <div class="max-w-md w-full space-y-8">
-        <div class="bg-white py-8 px-6 shadow rounded-xl sm:px-10 border border-gray-100">
-            <!-- 头部 -->
-            <div class="text-center mb-8">
-                <h2 class="text-3xl font-bold text-gray-900">
-                    B站私信机器人
-                </h2>
-                <p class="mt-2 text-gray-600">
-                    控制面板登录
-                </p>
-            </div>
-
-            <!-- 登录表单 -->
-            <form class="space-y-6" method="POST">
-                <!-- 错误提示 -->
-                {% if error %}
-                <div class="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg flex items-center">
-                    <i class="fa fa-exclamation-circle mr-3"></i>
-                    <span class="font-medium">{{ error }}</span>
-                </div>
-                {% endif %}
-
-                <!-- 用户名输入 -->
-                <div>
-                    <label for="username" class="block text-sm font-medium text-gray-700 mb-2">用户名</label>
-                    <div class="mt-1 relative rounded-md shadow-sm">
-                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <i class="fa fa-user text-gray-400"></i>
-                        </div>
-                        <input id="username" name="username" type="text" required
-                               class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                               placeholder="请输入用户名">
-                    </div>
-                </div>
-
-                <!-- 密码输入 -->
-                <div>
-                    <label for="password" class="block text-sm font-medium text-gray-700 mb-2">密码</label>
-                    <div class="mt-1 relative rounded-md shadow-sm">
-                        <div class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                            <i class="fa fa-lock text-gray-400"></i>
-                        </div>
-                        <input id="password" name="password" type="password" required
-                               class="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
-                               placeholder="请输入密码">
-                    </div>
-                </div>
-
-                <!-- 登录按钮 -->
-                <div>
-                    <button type="submit"
-                            class="group relative w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-gradient-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-all duration-200 shadow-md hover:shadow-lg">
-                        <span class="absolute left-0 inset-y-0 flex items-center pl-3">
-                            <i class="fa fa-sign-in-alt text-blue-200 group-hover:text-blue-100"></i>
-                        </span>
-                        登录系统
-                    </button>
-                </div>
-            </form>
+<div class="auth-shell">
+    <aside class="auth-aside">
+        <div class="auth-brand">
+            <span class="mark"><i class="fa-brands fa-bilibili"></i></span>
+            <span>B站私信机器人</span>
         </div>
-    </div>
+
+        <div class="auth-hero">
+            <h1>让每一条私信<br>都被<span>温柔以待</span></h1>
+            <p>基于关键词自动回复、多账号托管与插件扩展的一站式私信控制面板。登录后即可查看运行状态、管理账号与实时日志。</p>
+            <ul class="auth-points">
+                <li><i class="fa-solid fa-bolt"></i><span>关键词秒级响应，支持全局与账号级规则</span></li>
+                <li><i class="fa-solid fa-shield-halved"></i><span>本地部署，凭据与数据全部留在你自己的设备</span></li>
+                <li><i class="fa-solid fa-puzzle-piece"></i><span>插件化架构，按需扩展能力</span></li>
+            </ul>
+        </div>
+
+        <div class="auth-aside-foot">
+            <span>© <span id="auth-year">2026</span> Bilibili Private Message Bot</span>
+            <span class="chip"><i class="fa-solid fa-circle-check"></i> 安全登录</span>
+        </div>
+    </aside>
+
+    <main class="auth-main">
+        <section class="auth-card">
+            <header class="auth-card-head">
+                <span class="eyebrow"><i class="fa-solid fa-circle"></i> Admin Console</span>
+                <h2>欢迎回来</h2>
+                <p>请使用管理员账号登录控制面板</p>
+            </header>
+
+            {% if error %}
+            <div class="auth-alert" role="alert" style="margin-bottom: 16px;">
+                <i class="fa-solid fa-circle-exclamation"></i>
+                <span>{{ error }}</span>
+            </div>
+            {% endif %}
+
+            <form class="auth-form" method="POST" action="{{ url_for('login') }}">
+                <div class="field">
+                    <label class="field-label" for="username">用户名</label>
+                    <div class="input-icon-wrap">
+                        <i class="fa-regular fa-user"></i>
+                        <input class="input" id="username" name="username" type="text"
+                               autocomplete="username" placeholder="请输入用户名" required autofocus>
+                    </div>
+                </div>
+
+                <div class="field">
+                    <label class="field-label" for="password">密码</label>
+                    <div class="input-icon-wrap">
+                        <i class="fa-solid fa-lock"></i>
+                        <input class="input has-suffix" id="password" name="password" type="password"
+                               autocomplete="current-password" placeholder="请输入密码" required>
+                        <button class="input-suffix" id="toggle-password" type="button"
+                                aria-label="显示密码" aria-pressed="false" title="显示密码">
+                            <i class="fa-regular fa-eye"></i>
+                        </button>
+                    </div>
+                </div>
+
+                <button class="btn btn-primary btn-block" type="submit">
+                    <i class="fa-solid fa-arrow-right-to-bracket"></i>
+                    <span>登录控制面板</span>
+                </button>
+            </form>
+
+            <p class="auth-foot">
+                登录状态仅保存在当前浏览器会话中。<br>
+                如忘记密码，请在服务器上重新生成 <code>panel_config.json</code>。
+            </p>
+        </section>
+    </main>
 </div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    (function () {
+        var yearEl = document.getElementById('auth-year');
+        if (yearEl) yearEl.textContent = new Date().getFullYear();
+
+        var toggle = document.getElementById('toggle-password');
+        var input = document.getElementById('password');
+        if (toggle && input) {
+            toggle.addEventListener('click', function () {
+                var show = input.type === 'password';
+                input.type = show ? 'text' : 'password';
+                toggle.setAttribute('aria-pressed', show ? 'true' : 'false');
+                toggle.setAttribute('aria-label', show ? '隐藏密码' : '显示密码');
+                toggle.setAttribute('title', show ? '隐藏密码' : '显示密码');
+                var icon = toggle.querySelector('i');
+                if (icon) {
+                    icon.className = show ? 'fa-regular fa-eye-slash' : 'fa-regular fa-eye';
+                }
+                input.focus();
+            });
+        }
+    })();
+</script>
 {% endblock %}

@@ -38,32 +38,78 @@ function initLayuiForm() {
 // 全局变量
 let currentPreviewUrl = '';
 
-// 移动端菜单控制
+// ================= 侧边栏 / 导航 =================
+
+// 移动端抽屉
+// 顶栏菜单按钮兼容旧 id（mobile-menu-btn）与新 id（mobile-menu-button）
+function getMobileMenuButton() {
+    return document.querySelector('#mobile-menu-button, #mobile-menu-btn, .mobile-menu-button');
+}
+
+function openSidebar() {
+    document.body.classList.add('sidebar-open');
+    const btn = getMobileMenuButton();
+    if (btn) btn.setAttribute('aria-expanded', 'true');
+}
+
+function closeSidebar() {
+    document.body.classList.remove('sidebar-open');
+    const btn = getMobileMenuButton();
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+// 桌面端折叠
+function toggleSidebarCollapse() {
+    const collapsed = document.body.classList.toggle('is-collapsed');
+    try {
+        localStorage.setItem('bilibot.sidebarCollapsed', collapsed ? '1' : '0');
+    } catch (e) { /* 忽略隐私模式下的存储异常 */ }
+}
+
 document.addEventListener('DOMContentLoaded', function() {
-    // 为所有移动端菜单按钮添加事件监听
-    const menuButtons = document.querySelectorAll('#mobile-menu-button, .mobile-menu-button');
+    const menuButtons = document.querySelectorAll('#mobile-menu-btn, #mobile-menu-button, .mobile-menu-button');
     menuButtons.forEach(button => {
+        button.setAttribute('aria-expanded', 'false');
         button.addEventListener('click', function() {
-            const sidebar = document.getElementById('sidebar');
-            const overlay = document.getElementById('overlay');
-            if (sidebar && overlay) {
-                sidebar.classList.toggle('-translate-x-full');
-                overlay.style.display = sidebar.classList.contains('-translate-x-full') ? 'none' : 'block';
+            if (document.body.classList.contains('sidebar-open')) {
+                closeSidebar();
+            } else {
+                openSidebar();
             }
         });
     });
 
     const overlay = document.getElementById('overlay');
     if (overlay) {
-        overlay.addEventListener('click', function() {
-            const sidebar = document.getElementById('sidebar');
-            if (sidebar) {
-                sidebar.classList.add('-translate-x-full');
-                this.style.display = 'none';
-            }
-        });
+        overlay.addEventListener('click', closeSidebar);
     }
+
+    const collapseBtn = document.getElementById('sidebar-toggle');
+    if (collapseBtn) {
+        collapseBtn.addEventListener('click', toggleSidebarCollapse);
+        try {
+            if (localStorage.getItem('bilibot.sidebarCollapsed') === '1') {
+                document.body.classList.add('is-collapsed');
+            }
+        } catch (e) { /* 忽略 */ }
+    }
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') closeSidebar();
+    });
 });
+
+// 各区块的标题，用于顶栏面包屑
+const SECTION_LABELS = {
+    dashboard: '控制台',
+    accounts: '多账号管理',
+    github_discussions: 'GitHub 讨论区',
+    plugins: '插件商店',
+    logs: '运行日志',
+    image_bed: '图床管理',
+    admin: '账号设置',
+    about: '关于我们'
+};
 
 // 显示插件商店页面
 function showPluginsSection() {
@@ -97,10 +143,10 @@ function updateInstalledPluginsList() {
 
     if (!installedPlugins || installedPlugins.length === 0) {
         container.innerHTML = `
-            <div class="text-center text-gray-500 py-8">
-                <i class="fa fa-puzzle-piece text-3xl mb-3"></i>
-                <p>暂无安装的插件</p>
-                <p class="text-sm mt-2">在插件市场中搜索并安装插件</p>
+            <div class="empty-state compact">
+                <div class="empty-icon"><i class="fa-solid fa-puzzle-piece"></i></div>
+                <strong>暂无已安装插件</strong>
+                <p>在右侧插件市场中搜索并安装插件</p>
             </div>
         `;
         return;
@@ -109,94 +155,78 @@ function updateInstalledPluginsList() {
     container.innerHTML = installedPlugins.map(plugin => {
         // 状态徽章逻辑
         let statusBadge = '';
-        let statusDot = 'bg-gray-400';
+        let dotClass = 'dot';
         if (!botRunning) {
-            statusBadge = '<span class="text-sm px-2 py-1 bg-gray-100 text-gray-600 rounded">机器人未运行</span>';
+            statusBadge = '<span class="badge badge-neutral">机器人未运行</span>';
+            dotClass = 'dot';
         } else if (plugin.error) {
-            statusBadge = `<span class="text-sm px-2 py-1 bg-red-100 text-red-700 rounded cursor-pointer"
+            statusBadge = `<span class="badge badge-danger" style="cursor:pointer" title="点击查看失败原因"
                 onclick="showPluginError('${plugin.name.replace(/'/g, "\\'")}', '${(plugin.error || '').replace(/'/g, "\\'").replace(/\n/g, ' ')}')">加载失败</span>`;
-            statusDot = 'bg-red-500';
+            dotClass = 'dot red';
         } else if (plugin.loaded) {
-            statusBadge = '<span class="text-sm px-2 py-1 bg-green-100 text-green-800 rounded">运行中</span>';
-            statusDot = 'bg-green-500';
+            statusBadge = '<span class="badge badge-success">运行中</span>';
+            dotClass = 'dot green';
         } else if (plugin.enabled) {
-            statusBadge = '<span class="text-sm px-2 py-1 bg-yellow-100 text-yellow-800 rounded">未加载</span>';
-            statusDot = 'bg-yellow-500';
+            statusBadge = '<span class="badge badge-warning">未加载</span>';
+            dotClass = 'dot amber';
         } else {
-            statusBadge = '<span class="text-sm px-2 py-1 bg-gray-100 text-gray-600 rounded">已禁用</span>';
+            statusBadge = '<span class="badge badge-neutral">已禁用</span>';
+            dotClass = 'dot';
         }
 
         const updateBtn = plugin.has_update
-            ? `<button onclick="updatePlugin('${plugin.name}')"
-                    class="px-3 py-1 text-sm bg-orange-600 hover:bg-orange-700 text-white rounded transition">
-                    <i class="fa fa-arrow-up mr-1"></i>更新 v${plugin.latest_version || ''}
+            ? `<button class="btn btn-sm btn-warning" onclick="updatePlugin('${plugin.name}')">
+                   <i class="fa-solid fa-arrow-up"></i>更新 v${plugin.latest_version || ''}
                </button>`
             : '';
 
+        const deps = (plugin.metadata.dependencies || []);
+        const depsBlock = deps.length > 0 ? `
+            <div class="row-wrap mt-3">
+                <span class="field-hint">依赖</span>
+                ${deps.map(dep => `<span class="chip">${typeof dep === 'string' ? dep : (dep.name || '')}</span>`).join('')}
+            </div>
+        ` : '';
+
         return `
-        <div class="border border-gray-200 rounded-lg p-4 mb-4 bg-white hover:bg-gray-50 transition">
-            <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-                <div class="flex items-center space-x-3 flex-wrap gap-2">
-                    <div class="w-3 h-3 rounded-full ${statusDot}"></div>
-                    <h4 class="text-lg font-medium text-gray-800">${plugin.metadata.name}</h4>
-                    <span class="text-sm px-2 py-1 bg-blue-100 text-blue-800 rounded">v${plugin.metadata.version}</span>
+        <article class="list-item">
+            <div class="list-item-head">
+                <div class="list-item-title">
+                    <span class="${dotClass}" aria-hidden="true"></span>
+                    <h4>${plugin.metadata.name}</h4>
+                    <span class="badge badge-info">v${plugin.metadata.version}</span>
                     ${statusBadge}
                 </div>
-                <div class="flex items-center space-x-2 flex-wrap gap-2">
-                    <button onclick="togglePlugin('${plugin.name}', ${!plugin.enabled})"
-                            class="px-3 py-1 text-sm ${plugin.enabled ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-green-600 hover:bg-green-700'} text-white rounded transition">
-                        ${plugin.enabled ? '禁用' : '启用'}
+                <div class="list-actions">
+                    <button class="btn btn-sm ${plugin.enabled ? 'btn-warning' : 'btn-success'}"
+                            onclick="togglePlugin('${plugin.name}', ${!plugin.enabled})">
+                        <i class="fa-solid ${plugin.enabled ? 'fa-pause' : 'fa-play'}"></i>${plugin.enabled ? '禁用' : '启用'}
                     </button>
-                    <button onclick="reloadPlugin('${plugin.name}')"
-                            class="px-3 py-1 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded transition">
-                        重载
+                    <button class="btn btn-sm btn-secondary" onclick="reloadPlugin('${plugin.name}')">
+                        <i class="fa-solid fa-arrows-rotate"></i>重载
                     </button>
-                    <button onclick="openPluginDetail('${plugin.name}')"
-                            class="px-3 py-1 text-sm bg-purple-600 hover:bg-purple-700 text-white rounded transition">
-                        详情
+                    <button class="btn btn-sm btn-info" onclick="openPluginDetail('${plugin.name}')">
+                        <i class="fa-solid fa-circle-info"></i>详情
                     </button>
-                    <button onclick="backupPlugin('${plugin.name}')"
-                            class="px-3 py-1 text-sm bg-teal-600 hover:bg-teal-700 text-white rounded transition">
-                        备份
+                    <button class="btn btn-sm btn-ghost" onclick="backupPlugin('${plugin.name}')">
+                        <i class="fa-solid fa-hard-drive"></i>备份
                     </button>
                     ${updateBtn}
-                    <button onclick="uninstallPlugin('${plugin.name}')"
-                            class="px-3 py-1 text-sm bg-red-600 hover:bg-red-700 text-white rounded transition">
-                        卸载
+                    <button class="btn btn-sm btn-danger" onclick="uninstallPlugin('${plugin.name}')">
+                        <i class="fa-solid fa-trash"></i>卸载
                     </button>
                 </div>
             </div>
 
-            <div class="text-sm text-gray-600 mb-3">
-                ${plugin.metadata.description || '暂无描述'}
-            </div>
+            <p class="list-item-desc">${plugin.metadata.description || '暂无描述'}</p>
 
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                <div>
-                    <span class="text-gray-600">作者:</span>
-                    <span class="ml-2 font-medium">${plugin.metadata.author || '未知'}</span>
-                </div>
-                <div>
-                    <span class="text-gray-600">类型:</span>
-                    <span class="ml-2 font-medium">${plugin.metadata.type || 'base'}</span>
-                </div>
-                <div>
-                    <span class="text-gray-600">命令:</span>
-                    <span class="ml-2 font-medium">${(plugin.commands || []).map(c => '!' + c[0]).join(' ') || '无'}</span>
-                </div>
+            <div class="list-item-meta">
+                <div><span>作者</span><strong>${plugin.metadata.author || '未知'}</strong></div>
+                <div><span>类型</span><strong>${plugin.metadata.type || 'base'}</strong></div>
+                <div><span>命令</span><strong>${(plugin.commands || []).map(c => '!' + c[0]).join(' ') || '无'}</strong></div>
             </div>
-
-            ${plugin.metadata.dependencies && plugin.metadata.dependencies.length > 0 ? `
-            <div class="mt-3 pt-3 border-t border-gray-200">
-                <h5 class="text-sm font-medium text-gray-700 mb-2">依赖:</h5>
-                <div class="flex flex-wrap gap-1">
-                    ${plugin.metadata.dependencies.map(dep => `
-                        <span class="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs">${typeof dep === 'string' ? dep : (dep.name || '')}</span>
-                    `).join('')}
-                </div>
-            </div>
-            ` : ''}
-        </div>
+            ${depsBlock}
+        </article>
         `;
     }).join('');
 }
@@ -216,18 +246,17 @@ function searchPlugins() {
     
     if (!keyword.trim()) {
         document.getElementById('online-plugins-list').innerHTML = `
-            <div class="text-center text-gray-500 py-8">
-                <p>在搜索框中输入关键词搜索插件</p>
+            <div class="empty-state compact">
+                <div class="empty-icon"><i class="fa-solid fa-magnifying-glass"></i></div>
+                <strong>还没有搜索</strong>
+                <p>在上方输入关键词搜索插件</p>
             </div>
         `;
         return;
     }
 
     document.getElementById('online-plugins-list').innerHTML = `
-        <div class="text-center text-gray-500 py-8">
-            <i class="fa fa-spinner fa-spin text-2xl mb-2"></i>
-            <p>搜索中...</p>
-        </div>
+        <div class="loading-row"><i class="fa-solid fa-circle-notch fa-spin"></i>搜索中…</div>
     `;
 
     fetch(`/api/plugins/search?keyword=${encodeURIComponent(keyword)}`)
@@ -239,8 +268,10 @@ function searchPlugins() {
             } else {
                 showNotification('搜索插件失败', 'error');
                 document.getElementById('online-plugins-list').innerHTML = `
-                    <div class="text-center text-gray-500 py-8">
-                        <p>搜索失败</p>
+                    <div class="empty-state compact">
+                        <div class="empty-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                        <strong>搜索失败</strong>
+                        <p>请稍后重试</p>
                     </div>
                 `;
             }
@@ -258,8 +289,10 @@ function updateOnlinePluginsList() {
 
     if (!onlinePlugins || onlinePlugins.length === 0) {
         container.innerHTML = `
-            <div class="text-center text-gray-500 py-8">
-                <p>没有找到相关插件</p>
+            <div class="empty-state compact">
+                <div class="empty-icon"><i class="fa-solid fa-box-open"></i></div>
+                <strong>没有找到相关插件</strong>
+                <p>换个关键词再试试</p>
             </div>
         `;
         return;
@@ -267,73 +300,51 @@ function updateOnlinePluginsList() {
 
     container.innerHTML = onlinePlugins.map(plugin => {
         const isInstalled = installedPlugins.some(p => p.name === plugin.name);
-        
+        const deps = plugin.dependencies || [];
+
         return `
-        <div class="border border-gray-200 rounded-lg p-4 mb-4 bg-white hover:bg-gray-50 transition">
-            <div class="flex items-center justify-between mb-3">
-                <div class="flex items-center space-x-3">
-                    <h4 class="text-lg font-medium text-gray-800">${plugin.name}</h4>
-                    <span class="text-sm px-2 py-1 bg-blue-100 text-blue-800 rounded">v${plugin.version || '1.0.0'}</span>
-                    ${isInstalled ? '<span class="text-sm px-2 py-1 bg-green-100 text-green-800 rounded">已安装</span>' : ''}
+        <article class="list-item">
+            <div class="list-item-head">
+                <div class="list-item-title">
+                    <h4>${plugin.name}</h4>
+                    <span class="badge badge-info">v${plugin.version || '1.0.0'}</span>
+                    ${isInstalled ? '<span class="badge badge-success">已安装</span>' : ''}
                 </div>
-                <div class="flex items-center space-x-2">
+                <div class="list-actions">
                     ${!isInstalled ? `
-                    <button onclick="installPlugin('${plugin.full_name}', '${plugin.name}')" 
-                            class="px-3 py-1 text-sm bg-green-600 hover:bg-green-700 text-white rounded transition">
-                        安装
+                    <button class="btn btn-sm btn-success" onclick="installPlugin('${plugin.full_name}', '${plugin.name}')">
+                        <i class="fa-solid fa-download"></i>安装
                     </button>
                     ` : ''}
-                    <a href="${plugin.html_url}" target="_blank" 
-                       class="px-3 py-1 text-sm bg-gray-600 hover:bg-gray-700 text-white rounded transition">
-                        查看
+                    <a class="btn btn-sm btn-ghost" href="${plugin.html_url}" target="_blank" rel="noopener">
+                        <i class="fa-solid fa-arrow-up-right-from-square"></i>查看
                     </a>
                 </div>
             </div>
-            
-            <div class="text-sm text-gray-600 mb-3">
-                ${plugin.description || '暂无描述'}
+
+            <p class="list-item-desc">${plugin.description || '暂无描述'}</p>
+
+            <div class="list-item-meta" style="grid-template-columns:repeat(2,minmax(0,1fr));">
+                <div><span>作者</span><strong>${plugin.author || plugin.owner || '未知'}</strong></div>
+                <div><span>星标</span><strong>${plugin.stars || 0}</strong></div>
+                <div><span>Fork</span><strong>${plugin.forks || 0}</strong></div>
+                <div><span>更新</span><strong>${formatDate(plugin.updated_at)}</strong></div>
             </div>
-            
-            <div class="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
-                <div>
-                    <span class="text-gray-600">作者:</span>
-                    <span class="ml-2 font-medium">${plugin.author || plugin.owner || '未知'}</span>
-                </div>
-                <div>
-                    <span class="text-gray-600">星标:</span>
-                    <span class="ml-2 font-medium">${plugin.stars || 0}</span>
-                </div>
-                <div>
-                    <span class="text-gray-600"> forks:</span>
-                    <span class="ml-2 font-medium">${plugin.forks || 0}</span>
-                </div>
-                <div>
-                    <span class="text-gray-600">更新:</span>
-                    <span class="ml-2 font-medium">${formatDate(plugin.updated_at)}</span>
-                </div>
-            </div>
-            
-            ${plugin.dependencies && plugin.dependencies.length > 0 ? `
-            <div class="mt-3 pt-3 border-t border-gray-200">
-                <h5 class="text-sm font-medium text-gray-700 mb-2">依赖:</h5>
-                <div class="flex flex-wrap gap-1">
-                    ${plugin.dependencies.map(dep => `
-                        <span class="px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs">${dep}</span>
-                    `).join('')}
-                </div>
+
+            ${deps.length > 0 ? `
+            <div class="row-wrap mt-3">
+                <span class="field-hint">依赖</span>
+                ${deps.map(dep => `<span class="chip">${dep}</span>`).join('')}
             </div>
             ` : ''}
-        </div>
+        </article>
         `;
     }).join('');
 }
 
 function getPluginList() {
     document.getElementById('online-plugins-list').innerHTML = `
-        <div class="text-center text-gray-500 py-8">
-            <i class="fa fa-spinner fa-spin text-2xl mb-2"></i>
-            <p>加载中...</p>
-        </div>
+        <div class="loading-row"><i class="fa-solid fa-circle-notch fa-spin"></i>加载中…</div>
     `;
     fetch(`/api/plugins/lists`)
         .then(response => response.json())
@@ -344,8 +355,10 @@ function getPluginList() {
             } else {
                 showNotification('获取插件失败', 'error');
                 document.getElementById('online-plugins-list').innerHTML = `
-                    <div class="text-center text-gray-500 py-8">
-                        <p>获取失败</p>
+                    <div class="empty-state compact">
+                        <div class="empty-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                        <strong>获取失败</strong>
+                        <p>请检查网络后重试</p>
                     </div>
                 `;
             }
@@ -355,6 +368,7 @@ function getPluginList() {
             showNotification('获取插件失败', 'error');
         });
 }
+
 
 // 安装插件
 function installPlugin(repoFullName, pluginName) {
@@ -521,31 +535,28 @@ function renderPluginDetailInfo(data) {
     const badge = document.getElementById('plugin-detail-status-badge');
     if (!data.bot_running) {
         badge.textContent = '机器人未运行';
-        badge.className = 'text-sm px-2 py-1 bg-gray-100 text-gray-600 rounded';
+        badge.className = 'badge badge-neutral';
     } else if (status.error) {
         badge.textContent = '加载失败';
-        badge.className = 'text-sm px-2 py-1 bg-red-100 text-red-700 rounded';
+        badge.className = 'badge badge-danger';
     } else if (status.loaded) {
         badge.textContent = '运行中';
-        badge.className = 'text-sm px-2 py-1 bg-green-100 text-green-800 rounded';
+        badge.className = 'badge badge-success';
     } else if (metadata.enabled) {
         badge.textContent = '未加载';
-        badge.className = 'text-sm px-2 py-1 bg-yellow-100 text-yellow-800 rounded';
+        badge.className = 'badge badge-warning';
     } else {
         badge.textContent = '已禁用';
-        badge.className = 'text-sm px-2 py-1 bg-gray-100 text-gray-600 rounded';
+        badge.className = 'badge badge-neutral';
     }
 
     // 快捷操作按钮状态(启用/禁用)
     const toggleBtn = document.getElementById('plugin-detail-toggle-btn');
     if (toggleBtn) {
-        if (metadata.enabled) {
-            toggleBtn.textContent = '禁用';
-            toggleBtn.className = 'px-3 py-1 text-sm bg-yellow-600 hover:bg-yellow-700 text-white rounded transition';
-        } else {
-            toggleBtn.textContent = '启用';
-            toggleBtn.className = 'px-3 py-1 text-sm bg-green-600 hover:bg-green-700 text-white rounded transition';
-        }
+        toggleBtn.className = 'btn btn-sm ' + (metadata.enabled ? 'btn-warning' : 'btn-success');
+        toggleBtn.innerHTML = metadata.enabled
+            ? '<i class="fa-solid fa-pause"></i>禁用'
+            : '<i class="fa-solid fa-play"></i>启用';
     }
 
     // API 测试提示: 已注册路由
@@ -555,53 +566,48 @@ function renderPluginDetailInfo(data) {
     }
 
     const infoEl = document.getElementById('plugin-detail-info');
-    const commands = (status.commands || []).map(c => `!${c[0]}${c[1] ? ' - ' + c[1] : ''}`).join('<br>') || '无';
-    const apiRoutes = (status.api_routes || []).map(r => `/api/plugins/api/${pluginDetailName}${r}`).join('<br>') || '无';
+    const commands = (status.commands || []).map(c => `!${c[0]}${c[1] ? ' - ' + c[1] : ''}`).join('\n') || '无';
+    const apiRoutes = (status.api_routes || []).map(r => `/api/plugins/api/${pluginDetailName}${r}`).join('\n') || '无';
     const backups = (data.backups || []);
     const backupsHtml = backups.length > 0
         ? backups.map(b => `
-            <div class="flex items-center justify-between py-1 px-2 bg-gray-50 rounded mb-1">
-                <span class="text-xs">${b.file} (${formatFileSize(b.size)})</span>
-                <button onclick="restorePlugin('${pluginDetailName}', '${b.file}')"
-                        class="px-2 py-0.5 text-xs bg-teal-600 text-white rounded hover:bg-teal-700">恢复</button>
+            <div class="backup-row">
+                <span class="mono">${b.file}<em>${formatFileSize(b.size)}</em></span>
+                <button class="btn btn-sm btn-ghost" onclick="restorePlugin('${pluginDetailName}', '${b.file}')">
+                    <i class="fa-solid fa-clock-rotate-left"></i>恢复
+                </button>
             </div>`).join('')
-        : '<span class="text-sm text-gray-400">暂无备份</span>';
+        : '<p class="field-hint" style="margin:6px 0;">暂无备份</p>';
 
     infoEl.innerHTML = `
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-            <div><span class="text-gray-600">描述:</span>
-                <span class="ml-2 font-medium">${metadata.description || '暂无描述'}</span></div>
-            <div><span class="text-gray-600">作者:</span>
-                <span class="ml-2 font-medium">${metadata.author || '未知'}</span></div>
-            <div><span class="text-gray-600">类型:</span>
-                <span class="ml-2 font-medium">${metadata.type || 'base'}</span></div>
-            <div><span class="text-gray-600">加载顺序:</span>
-                <span class="ml-2 font-medium">${metadata.load_order || 0}</span></div>
-            <div><span class="text-gray-600">绕过关注检查:</span>
-                <span class="ml-2 font-medium">${metadata.bypass_follow_check ? '是' : '否'}</span></div>
-            <div><span class="text-gray-600">仓库:</span>
-                <span class="ml-2 font-medium">${metadata.repository || '未配置'}</span></div>
+        <div class="info-list">
+            <div class="info-row"><span>描述</span><strong>${metadata.description || '暂无描述'}</strong></div>
+            <div class="info-row"><span>作者</span><strong>${metadata.author || '未知'}</strong></div>
+            <div class="info-row"><span>类型</span><strong>${metadata.type || 'base'}</strong></div>
+            <div class="info-row"><span>加载顺序</span><strong>${metadata.load_order || 0}</strong></div>
+            <div class="info-row"><span>绕过关注检查</span><strong>${metadata.bypass_follow_check ? '是' : '否'}</strong></div>
+            <div class="info-row"><span>仓库</span><strong>${metadata.repository || '未配置'}</strong></div>
         </div>
-        ${status.error ? `<div class="mt-3 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">加载失败原因: ${status.error}</div>` : ''}
-        <div class="mt-4 border-t border-gray-200 pt-3">
-            <h4 class="text-sm font-medium text-gray-700 mb-2">已注册命令</h4>
-            <div class="text-sm text-gray-600 bg-gray-50 rounded p-3">${commands}</div>
+        ${status.error ? `<div class="notice notice-danger" style="margin-top:4px;">
+            <div class="notice-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+            <div class="notice-body"><h3>加载失败原因</h3><p>${status.error}</p></div>
+        </div>` : ''}
+        <div class="detail-section">
+            <h4 class="field-label">已注册命令</h4>
+            <pre class="code-panel">${commands}</pre>
         </div>
-        <div class="mt-3">
-            <h4 class="text-sm font-medium text-gray-700 mb-2">插件API路由</h4>
-            <div class="text-sm text-gray-600 bg-gray-50 rounded p-3">${apiRoutes}</div>
+        <div class="detail-section">
+            <h4 class="field-label">插件 API 路由</h4>
+            <pre class="code-panel">${apiRoutes}</pre>
         </div>
-        <div class="mt-3">
-            <div class="flex items-center justify-between mb-2">
-                <h4 class="text-sm font-medium text-gray-700">备份列表</h4>
-                <button onclick="backupPlugin('${pluginDetailName}')"
-                        class="px-3 py-1 text-sm bg-teal-600 text-white rounded hover:bg-teal-700">立即备份</button>
+        <div class="detail-section">
+            <div class="row-between mb-2">
+                <h4 class="field-label" style="margin:0;">备份列表</h4>
+                <button class="btn btn-sm btn-secondary" onclick="backupPlugin('${pluginDetailName}')">
+                    <i class="fa-solid fa-hard-drive"></i>立即备份
+                </button>
             </div>
-            <div>${backupsHtml}</div>
-        </div>
-        <div class="mt-3 flex space-x-2">
-            <button onclick="checkPluginUpdate('${pluginDetailName}')"
-                    class="px-3 py-1 text-sm bg-orange-600 text-white rounded hover:bg-orange-700">检查更新</button>
+            ${backupsHtml}
         </div>
     `;
 }
@@ -679,10 +685,7 @@ function testPluginApi() {
 function switchPluginTab(tab) {
     // tab 高亮
     document.querySelectorAll('.plugin-detail-tab').forEach(btn => {
-        const active = btn.getAttribute('data-plugin-tab') === tab;
-        btn.className = 'plugin-detail-tab px-4 py-2 text-sm font-medium ' +
-            (active ? 'text-blue-600 border-b-2 border-blue-600'
-                    : 'text-gray-600 hover:text-gray-800');
+        btn.classList.toggle('is-active', btn.getAttribute('data-plugin-tab') === tab);
     });
     // 内容显示
     document.querySelectorAll('.plugin-detail-content').forEach(el => el.classList.add('hidden'));
@@ -788,14 +791,14 @@ function loadPluginLogs(name) {
 function loadPluginMetrics(name) {
     const cardsEl = document.getElementById('plugin-detail-metric-cards');
     const rawEl = document.getElementById('plugin-detail-metrics');
-    if (cardsEl) cardsEl.innerHTML = '<div class="text-gray-500 text-sm col-span-full">加载中...</div>';
+    if (cardsEl) cardsEl.innerHTML = '<div class="loading-row" style="grid-column:1/-1;"><i class="fa-solid fa-circle-notch fa-spin"></i>加载中…</div>';
     if (rawEl) rawEl.textContent = '加载中...';
     fetch('/api/plugins/metrics?plugin=' + encodeURIComponent(name))
         .then(response => response.json())
         .then(data => {
             if (!data || !data.success) {
-                if (cardsEl) cardsEl.innerHTML = '<div class="text-gray-500 text-sm col-span-full">' +
-                    ((data && data.message) || '获取指标失败(机器人未运行?)') + '</div>';
+                if (cardsEl) cardsEl.innerHTML = '<p class="field-hint" style="grid-column:1/-1;">' +
+                    ((data && data.message) || '获取指标失败(机器人未运行?)') + '</p>';
                 if (rawEl) rawEl.textContent = '(无法获取指标)';
                 return;
             }
@@ -805,17 +808,19 @@ function loadPluginMetrics(name) {
             if (cardsEl) {
                 cardsEl.innerHTML = entries.length
                     ? entries.map(([k, v]) => `
-                        <div class="bg-gray-50 border border-gray-100 rounded-lg p-4">
-                            <div class="text-xs text-gray-500 break-all">${k}</div>
-                            <div class="text-lg font-semibold text-gray-800 mt-1 break-all">${typeof v === 'object' ? JSON.stringify(v) : v}</div>
+                        <div class="stat-card">
+                            <div class="stat-top">
+                                <span class="stat-label">${k}</span>
+                            </div>
+                            <div class="stat-value is-text">${typeof v === 'object' ? JSON.stringify(v) : v}</div>
                         </div>`).join('')
-                    : '<div class="text-gray-400 text-sm col-span-full">该插件未注册指标</div>';
+                    : '<p class="field-hint" style="grid-column:1/-1;">该插件未注册指标</p>';
             }
             if (rawEl) rawEl.textContent = JSON.stringify(pluginData.dashboard || {}, null, 2);
         })
         .catch(error => {
             console.error('获取插件指标失败:', error);
-            if (cardsEl) cardsEl.innerHTML = '<div class="text-red-500 text-sm col-span-full">获取指标失败</div>';
+            if (cardsEl) cardsEl.innerHTML = '<p class="field-error" style="grid-column:1/-1;">获取指标失败</p>';
             if (rawEl) rawEl.textContent = '获取指标失败';
         });
 }
@@ -1109,24 +1114,29 @@ function showSection(sectionId) {
     document.querySelectorAll('.section').forEach(section => {
         section.style.display = 'none';
     });
-    
+
     // 显示选中的部分
     const targetSection = document.getElementById(sectionId);
     if (targetSection) {
         targetSection.style.display = 'block';
+        targetSection.classList.add('active');
     }
-    
+
     // 更新导航项状态
     document.querySelectorAll('.nav-item').forEach(item => {
-        item.classList.remove('active', 'bg-primary-50', 'border', 'border-primary-100', 'text-gray-700');
-        item.classList.add('text-gray-600', 'hover:bg-gray-50');
+        item.classList.remove('active');
     });
-    
+
     // 找到被点击的导航项并激活它
     const clickedNav = document.querySelector(`[href="#${sectionId}"]`);
     if (clickedNav) {
-        clickedNav.classList.add('active', 'bg-primary-50', 'border', 'border-primary-100', 'text-gray-700');
-        clickedNav.classList.remove('text-gray-600', 'hover:bg-gray-50');
+        clickedNav.classList.add('active');
+    }
+
+    // 更新顶栏面包屑
+    const crumb = document.getElementById('page-crumb');
+    if (crumb && SECTION_LABELS[sectionId]) {
+        crumb.textContent = SECTION_LABELS[sectionId];
     }
 
     // 特殊处理：如果是日志部分，开始轮询日志
@@ -1135,14 +1145,16 @@ function showSection(sectionId) {
     } else {
         stopLogPolling();
     }
-    
-    // 在移动端选择后关闭菜单
-    if (window.innerWidth < 1024) {
-        const sidebar = document.getElementById('sidebar');
-        const overlay = document.getElementById('overlay');
-        if (sidebar) sidebar.classList.add('-translate-x-full');
-        if (overlay) overlay.style.display = 'none';
-    }
+
+    // 在移动端选择后关闭抽屉
+    closeSidebar();
+
+    // 记录当前区块，刷新后保持位置
+    try {
+        if (location.hash !== '#' + sectionId) {
+            history.replaceState(null, '', '#' + sectionId);
+        }
+    } catch (e) { /* 忽略 */ }
 }
 
 // 启动日志轮询
@@ -1168,19 +1180,17 @@ let autoScrollEnabled = true;
 // 设置日志过滤器
 function setLogFilter(filter) {
     currentLogFilter = filter;
-    
+
     // 更新按钮状态
     document.querySelectorAll('.log-filter-btn').forEach(btn => {
-        btn.classList.remove('active', 'bg-blue-600', 'text-white');
-        btn.classList.add('bg-gray-200', 'text-gray-700');
+        btn.classList.remove('active');
     });
-    
+
     const activeBtn = document.getElementById(`filter-${filter}`);
     if (activeBtn) {
-        activeBtn.classList.add('active', 'bg-blue-600', 'text-white');
-        activeBtn.classList.remove('bg-gray-200', 'text-gray-700');
+        activeBtn.classList.add('active');
     }
-    
+
     // 重新渲染日志
     renderLogs();
 }
@@ -1195,17 +1205,22 @@ function renderLogs() {
     const logContainer = document.getElementById('log-container');
     const searchInput = document.getElementById('log-search');
     const searchTerm = searchInput ? searchInput.value.toLowerCase() : '';
-    
+
     if (!logContainer) return;
-    
+
     if (!currentLogs || currentLogs.length === 0) {
-        logContainer.innerHTML = '<div class="text-center text-gray-500 py-8">暂无日志</div>';
+        logContainer.innerHTML = `
+            <div class="empty-state" style="padding:32px 12px;">
+                <div class="empty-icon" style="background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.08);color:#64748b;"><i class="fa-regular fa-file-lines"></i></div>
+                <strong style="color:#94a3b8;">暂无日志</strong>
+                <p>机器人启动后将在此输出运行记录</p>
+            </div>`;
         updateLogStats(0, 0);
         return;
     }
-    
+
     let filteredLogs = currentLogs;
-    
+
     // 应用类型过滤器
     if (currentLogFilter !== 'all') {
         filteredLogs = currentLogs.filter(log => {
@@ -1221,77 +1236,87 @@ function renderLogs() {
             return true;
         });
     }
-    
+
     // 应用搜索过滤器
     if (searchTerm) {
         filteredLogs = filteredLogs.filter(log => log.toLowerCase().includes(searchTerm));
     }
-    
+
     if (filteredLogs.length === 0) {
-        logContainer.innerHTML = '<div class="text-center text-gray-500 py-8">没有匹配的日志</div>';
+        logContainer.innerHTML = `
+            <div class="empty-state" style="padding:32px 12px;">
+                <div class="empty-icon" style="background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.08);color:#64748b;"><i class="fa-solid fa-magnifying-glass"></i></div>
+                <strong style="color:#94a3b8;">没有匹配的日志</strong>
+                <p>试试更换过滤条件或关键词</p>
+            </div>`;
         updateLogStats(0, filteredLogs.length);
         return;
     }
-    
+
+    const escapeHtml = (text) => String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+
     // 渲染日志条目
     logContainer.innerHTML = filteredLogs.map(log => {
         let logClass = 'info';
-        let icon = 'fa fa-info-circle text-blue-400';
-        let badge = '';
-        
+        let icon = 'fa-solid fa-circle-info';
+        let label = 'INFO';
+
         if (log.includes('ERROR') || log.includes('错误') || log.includes('失败')) {
             logClass = 'error';
-            icon = 'fa fa-exclamation-circle text-red-400';
+            icon = 'fa-solid fa-circle-exclamation';
+            label = 'ERROR';
         } else if (log.includes('成功') || log.includes('SUCCESS')) {
             logClass = 'success';
-            icon = 'fa fa-check-circle text-green-400';
+            icon = 'fa-solid fa-circle-check';
+            label = 'OK';
         } else if (log.includes('警告') || log.includes('WARNING')) {
             logClass = 'warning';
-            icon = 'fa fa-exclamation-triangle text-yellow-400';
+            icon = 'fa-solid fa-triangle-exclamation';
+            label = 'WARN';
         } else if (log.includes('BOT:')) {
             logClass = 'bot';
-            icon = 'fa fa-robot text-purple-400';
+            icon = 'fa-solid fa-robot';
+            label = 'BOT';
         }
-        
-        // 高亮搜索关键词
-        let highlightedLog = log;
+
+        // 转义后再做关键词高亮，避免日志内容里的 HTML 被解析
+        let highlightedLog = escapeHtml(log);
         if (searchTerm) {
-            const regex = new RegExp(`(${searchTerm})`, 'gi');
-            highlightedLog = log.replace(regex, '<mark class="bg-yellow-300 text-gray-900">$1</mark>');
+            const escapedTerm = searchTerm.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp(`(${escapedTerm})`, 'gi');
+            highlightedLog = highlightedLog.replace(regex, '<mark>$1</mark>');
         }
-        
+
+        const safeAttr = escapeHtml(log);
+
         return `
-            <div class="log-entry ${logClass} flex items-start space-x-3 py-2 px-3 border-l-4 ${getBorderColor(logClass)} hover:bg-gray-800 transition cursor-pointer" onclick="copyLogContent('${log.replace(/'/g, "\'")}')">
-                <i class="${icon} mt-1 flex-shrink-0"></i>
-                <div class="flex-1">
-                    <div class="flex items-center flex-wrap">
-                        <span class="text-gray-300">${highlightedLog}</span>
-                        ${badge}
-                    </div>
-                    <div class="text-xs text-gray-500 mt-1 opacity-0 hover:opacity-100 transition">
-                        点击复制日志内容
-                    </div>
+            <div class="log-entry ${logClass}" data-log="${safeAttr}" title="点击复制日志内容">
+                <div class="log-entry-head">
+                    <i class="${icon}"></i>
+                    <span class="log-tag">${label}</span>
                 </div>
+                <div class="log-entry-body">${highlightedLog}</div>
             </div>
         `;
     }).join('');
-    
+
+    // 点击复制（事件委托，避免内联字符串转义问题）
+    logContainer.onclick = function(evt) {
+        const entry = evt.target.closest('.log-entry');
+        if (entry) {
+            copyLogContent(entry.getAttribute('data-log') || '');
+        }
+    };
+
     updateLogStats(currentLogs.length, filteredLogs.length);
-    
+
     // 自动滚动到底部
     if (autoScrollEnabled) {
         logContainer.scrollTop = logContainer.scrollHeight;
-    }
-}
-
-// 获取边框颜色
-function getBorderColor(logClass) {
-    switch(logClass) {
-        case 'error': return 'border-red-500';
-        case 'success': return 'border-green-500';
-        case 'warning': return 'border-yellow-500';
-        case 'bot': return 'border-purple-500';
-        default: return 'border-blue-500';
     }
 }
 
@@ -1412,13 +1437,13 @@ document.addEventListener('DOMContentLoaded', function() {
     uploadArea.addEventListener('dragover', function(e) {
         e.preventDefault();
         e.stopPropagation();
-        uploadArea.classList.add('border-blue-400', 'bg-blue-50');
+        uploadArea.classList.add('dragover');
     });
 
     uploadArea.addEventListener('dragenter', function(e) {
         e.preventDefault();
         e.stopPropagation();
-        uploadArea.classList.add('border-blue-400', 'bg-blue-50');
+        uploadArea.classList.add('dragover');
     });
 
     uploadArea.addEventListener('dragleave', function(e) {
@@ -1426,14 +1451,14 @@ document.addEventListener('DOMContentLoaded', function() {
         e.stopPropagation();
         // 只有当鼠标离开上传区域时才移除样式
         if (!uploadArea.contains(e.relatedTarget)) {
-            uploadArea.classList.remove('border-blue-400', 'bg-blue-50');
+            uploadArea.classList.remove('dragover');
         }
     });
 
     uploadArea.addEventListener('drop', function(e) {
         e.preventDefault();
         e.stopPropagation();
-        uploadArea.classList.remove('border-blue-400', 'bg-blue-50');
+        uploadArea.classList.remove('dragover');
         
         const files = e.dataTransfer.files;
         if (files.length > 0) {
@@ -1461,63 +1486,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
 
-    function handleFileSelect(file) {
-        if (!file) {
-            showNotification('未选择文件', 'error');
-            return;
-        }
-
-        // 检查文件类型
-        const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
-        if (!file.type.startsWith('image/') || !allowedTypes.includes(file.type.toLowerCase())) {
-            showNotification('请选择有效的图片文件（JPG、PNG、GIF、WebP）', 'error');
-            resetFileSelection();
-            return;
-        }
-
-        // 检查文件大小（限制为10MB）
-        const maxSize = 10 * 1024 * 1024; // 10MB
-        if (file.size > maxSize) {
-            showNotification('图片大小不能超过10MB', 'error');
-            resetFileSelection();
-            return;
-        }
-
-        if (file.size === 0) {
-            showNotification('文件为空，请选择有效的图片文件', 'error');
-            resetFileSelection();
-            return;
-        }
-
-        // 显示文件信息
-        fileName.textContent = file.name;
-        fileSize.textContent = formatFileSize(file.size);
-        fileInfo.classList.remove('hidden');
-
-        // 检查是否有可用的账号
-        const accountSelect = document.getElementById('upload-account');
-        if (accountSelect && accountSelect.value === "") {
-            showNotification('请先选择上传账号', 'error');
-            uploadButton.disabled = true;
-        } else {
-            uploadButton.disabled = false;
-        }
-    }
-
-    function resetFileSelection() {
-        document.getElementById('file-info').classList.add('hidden');
-        document.getElementById('upload-button').disabled = true;
-        document.getElementById('image-file').value = '';
-        document.getElementById('upload-area').classList.remove('border-blue-400', 'bg-blue-50');
-    }
-
-    function formatFileSize(bytes) {
-        if (bytes === 0) return '0 Bytes';
-        const k = 1024;
-        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
-        const i = Math.floor(Math.log(bytes) / Math.log(k));
-        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-    }
 
     // 账号选择变化时启用/禁用上传按钮
     const accountSelect = document.getElementById('upload-account');
@@ -1561,7 +1529,9 @@ document.addEventListener('DOMContentLoaded', function() {
         // 显示上传进度
         document.getElementById('upload-progress').classList.remove('hidden');
         document.getElementById('upload-button').disabled = true;
-        document.getElementById('progress-bar').style.width = '0%';
+        const bar = document.getElementById('progress-bar');
+        bar.style.width = '0%';
+        bar.classList.remove('is-error');
         document.getElementById('progress-text').textContent = '准备上传... 0%';
 
         const xhr = new XMLHttpRequest();
@@ -1626,7 +1596,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     function handleUploadError(message, type = 'error') {
         document.getElementById('progress-bar').style.width = '100%';
-        document.getElementById('progress-bar').classList.add('bg-red-600');
+        document.getElementById('progress-bar').classList.add('is-error');
         document.getElementById('progress-text').textContent = '上传失败';
         showLayuiAlert(message, type);
         document.getElementById('upload-button').disabled = false;
@@ -1663,7 +1633,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const cancelBtn = document.createElement('button');
         cancelBtn.id = 'cancel-upload-btn';
         cancelBtn.type = 'button';
-        cancelBtn.className = 'px-4 py-3 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition-all duration-200 shadow-sm hover:shadow-md';
+        cancelBtn.className = 'btn btn-secondary';
         cancelBtn.innerHTML = '<i class="fa fa-times"></i>';
         
         cancelBtn.addEventListener('click', function() {
@@ -1707,65 +1677,53 @@ function updateImagesList(images) {
     const container = document.getElementById('images-list');
     const emptyMessage = document.getElementById('empty-images');
     const imagesCount = document.getElementById('images-count');
-    
+
     if (!container) return;
-    
-    imagesCount.textContent = images ? images.length : 0;
-    
+
+    if (imagesCount) imagesCount.textContent = images ? images.length : 0;
+
     if (!images || images.length === 0) {
         container.classList.add('hidden');
-        emptyMessage.classList.remove('hidden');
+        if (emptyMessage) emptyMessage.classList.remove('hidden');
         return;
     }
-    
+
     container.classList.remove('hidden');
-    emptyMessage.classList.add('hidden');
-    
-    container.innerHTML = images.map((image, index) => `
-        <div class="group relative bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-all duration-200">
-            <div class="aspect-square bg-gray-100 overflow-hidden">
-                <img src="${image.url}" 
-                     alt="${image.name || '图片'}" 
-                     class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 cursor-pointer"
-                     onclick="previewImage(${JSON.stringify(image).replace(/"/g, '&quot;')})"
-                     loading="lazy"
-                     onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjNmNGY2Ii8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzljYTNkYiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPuWbvueJh+WKoOi9veWksei0pTwvdGV4dD48L3N2Zz4='" referrerpolicy="no-referrer">
+    if (emptyMessage) emptyMessage.classList.add('hidden');
+
+    container.innerHTML = images.map(image => {
+        const safeUrl = (image.url || '').replace(/'/g, "\\'");
+        const name = image.name || '未命名';
+        return `
+        <figure class="image-card" tabindex="0"
+                onclick="previewImage('${safeUrl}')"
+                oncontextmenu="showImageContextMenu(event, '${safeUrl}'); return false;"
+                onkeydown="if(event.key==='Enter'){previewImage('${safeUrl}');}">
+            <div class="thumb">
+                <img src="${image.url}" alt="${name}" loading="lazy" referrerpolicy="no-referrer">
             </div>
-            
-            <div class="p-3">
-                <p class="text-sm font-medium text-gray-800 truncate" title="${image.name || '未命名'}">
-                    ${image.name || '未命名'}
-                </p>
-                <p class="text-xs text-gray-500 mt-1 truncate">
-                    ${image.upload_account || '未知用户'}
-                </p>
-                <p class="text-xs text-gray-400 mt-1">
-                    ${image.upload_time || ''}
-                </p>
+            <figcaption class="meta">
+                <strong title="${name}">${name}</strong>
+                <span>${image.upload_account || '未知用户'}</span>
+                <span>${image.upload_time || ''}</span>
+            </figcaption>
+            <div class="overlay">
+                <button type="button" title="复制 URL" aria-label="复制 URL"
+                        onclick="event.stopPropagation(); copyImageUrl('${safeUrl}')">
+                    <i class="fa-regular fa-copy"></i>
+                </button>
+                <button type="button" title="预览" aria-label="预览"
+                        onclick="event.stopPropagation(); previewImage('${safeUrl}')">
+                    <i class="fa-regular fa-eye"></i>
+                </button>
+                <button type="button" class="danger" title="删除" aria-label="删除"
+                        onclick="event.stopPropagation(); deleteImage('${safeUrl}')">
+                    <i class="fa-regular fa-trash-can"></i>
+                </button>
             </div>
-            
-            <!-- 悬停操作按钮 -->
-            <div class="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center opacity-0 group-hover:opacity-100">
-                <div class="flex space-x-2">
-                    <button onclick="copyImageUrl('${image.url}')" 
-                            class="p-2 bg-white rounded-full shadow-lg hover:bg-gray-50 transition transform hover:scale-110"
-                            title="复制URL">
-                        <i class="fa fa-copy text-gray-700 text-sm"></i>
-                    </button>
-                    <button onclick="previewImage(${JSON.stringify(image).replace(/"/g, '&quot;')})" 
-                            class="p-2 bg-white rounded-full shadow-lg hover:bg-gray-50 transition transform hover:scale-110"
-                            title="预览">
-                        <i class="fa fa-eye text-blue-600 text-sm"></i>
-                    </button>
-                    <button onclick="deleteImage('${image.url}')" 
-                            class="p-2 bg-white rounded-full shadow-lg hover:bg-gray-50 transition transform hover:scale-110"
-                            title="删除">
-                        <i class="fa fa-trash text-red-600 text-sm"></i>
-                    </button>
-                </div>
-            </div>
-        </div>
-    `).join('');
+        </figure>
+        `;
+    }).join('');
 }
 
 function showLayuiAlert(message, type = 'info') {
@@ -1781,41 +1739,42 @@ function showLayuiAlert(message, type = 'info') {
 
 function initImageBed() {
     initLayuiForm();
-    initializeImageUpload();
     loadImages();
 }
 
 // 右键菜单功能
 function showImageContextMenu(event, imageUrl) {
     event.preventDefault();
-    
+
     // 移除现有的右键菜单
     const existingMenu = document.getElementById('image-context-menu');
     if (existingMenu) {
         existingMenu.remove();
     }
-    
-    // 创建右键菜单
+
     const contextMenu = document.createElement('div');
     contextMenu.id = 'image-context-menu';
-    contextMenu.className = 'fixed bg-white shadow-lg rounded-lg py-2 z-50 border border-gray-200';
-    contextMenu.style.left = event.pageX + 'px';
-    contextMenu.style.top = event.pageY + 'px';
-    
+    contextMenu.className = 'context-menu';
+    contextMenu.setAttribute('role', 'menu');
+    const menuWidth = 190;
+    const left = Math.min(event.clientX, window.innerWidth - menuWidth - 12);
+    const top = Math.min(event.clientY, window.innerHeight - 110);
+    contextMenu.style.left = Math.max(8, left) + 'px';
+    contextMenu.style.top = Math.max(8, top) + 'px';
+
     contextMenu.innerHTML = `
-        <button onclick="copyImageUrl('${imageUrl}'); hideContextMenu()" 
-                class="w-full px-4 py-2 text-left hover:bg-gray-100 flex items-center">
-            <i class="fa fa-copy mr-2 text-blue-600"></i>复制URL
+        <button type="button" role="menuitem"
+                onclick="copyImageUrl('${imageUrl}'); hideContextMenu()">
+            <i class="fa-regular fa-copy"></i>复制图片 URL
         </button>
-        <hr class="my-1">
-        <button onclick="deleteImage('${imageUrl}'); hideContextMenu()" 
-                class="w-full px-4 py-2 text-left hover:bg-gray-100 flex items-center text-red-600">
-            <i class="fa fa-trash mr-2"></i>删除图片
+        <button type="button" role="menuitem" class="danger"
+                onclick="deleteImage('${imageUrl}'); hideContextMenu()">
+            <i class="fa-regular fa-trash-can"></i>删除图片
         </button>
     `;
-    
+
     document.body.appendChild(contextMenu);
-    
+
     // 点击其他地方隐藏菜单
     setTimeout(() => {
         document.addEventListener('click', hideContextMenu, { once: true });
@@ -1838,71 +1797,6 @@ async function copyImageUrl(url) {
         console.error('复制失败:', err);
         showLayuiAlert('复制失败，请手动复制', 'error');
     }
-}
-
-// 图片上传功能优化
-function initializeImageUpload() {
-    const uploadForm = document.getElementById('upload-image-form');
-    const fileInput = document.getElementById('image-file');
-    const uploadArea = document.getElementById('upload-area');
-    
-    // 拖拽上传事件
-    ['dragover', 'dragenter'].forEach(event => {
-        uploadArea.addEventListener(event, (e) => {
-            e.preventDefault();
-            uploadArea.classList.add('border-blue-400', 'bg-blue-50');
-        });
-    });
-
-    ['dragleave', 'dragend'].forEach(event => {
-        uploadArea.addEventListener(event, (e) => {
-            e.preventDefault();
-            if (!uploadArea.contains(e.relatedTarget)) {
-                uploadArea.classList.remove('border-blue-400', 'bg-blue-50');
-            }
-        });
-    });
-
-    uploadArea.addEventListener('drop', (e) => {
-        e.preventDefault();
-        uploadArea.classList.remove('border-blue-400', 'bg-blue-50');
-        const files = e.dataTransfer.files;
-        if (files.length > 0) {
-            handleFileSelect(files[0]);
-            const dataTransfer = new DataTransfer();
-            dataTransfer.items.add(files[0]);
-            fileInput.files = dataTransfer.files;
-        }
-    });
-
-    // 点击上传
-    uploadArea.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', () => {
-        if (fileInput.files.length > 0) {
-            handleFileSelect(fileInput.files[0]);
-        } else {
-            resetFileSelection();
-        }
-    });
-
-    // 表单提交
-    uploadForm.addEventListener('submit', (e) => {
-        e.preventDefault();
-        const file = fileInput.files[0];
-        const accountIndex = document.getElementById('upload-account').value;
-        
-        if (!file) {
-            showLayuiAlert('请选择要上传的图片', 'warning');
-            return;
-        }
-        
-        if (!accountIndex) {
-            showLayuiAlert('请选择上传账号', 'warning');
-            return;
-        }
-
-        uploadImage(file, accountIndex);
-    });
 }
 
 // 初始化代码高亮
@@ -1992,56 +1886,30 @@ function addLineNumbers(codeBlock) {
     }
 }
 
-function handleFileSelect(file) {
-    if (!file) return;
-
-    // 文件类型检查
-    const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
-    if (!file.type.startsWith('image/') || !allowedTypes.includes(file.type.toLowerCase())) {
-        showLayuiAlert('请选择有效的图片文件（JPG、PNG、GIF、WebP）', 'error');
-        return;
-    }
-
-    // 文件大小检查
-    const maxSize = 10 * 1024 * 1024;
-    if (file.size > maxSize) {
-        showLayuiAlert('图片大小不能超过10MB', 'error');
-        return;
-    }
-
-    if (file.size === 0) {
-        showLayuiAlert('文件为空，请选择有效的图片文件', 'error');
-        return;
-    }
-
-    // 显示文件信息
-    document.getElementById('file-name').textContent = file.name;
-    document.getElementById('file-size').textContent = formatFileSize(file.size);
-    document.getElementById('file-info').classList.remove('hidden');
-    
-    // 检查账号选择
-    const accountSelect = document.getElementById('upload-account');
-    if (accountSelect && accountSelect.value) {
-        document.getElementById('upload-button').disabled = false;
-    }
-}
-
 // 重置文件选择
 function resetFileSelection() {
-    document.getElementById('file-info').classList.add('hidden');
-    document.getElementById('upload-button').disabled = true;
-    document.getElementById('image-file').value = '';
-    document.getElementById('upload-area').classList.remove('border-blue-400', 'bg-blue-50');
+    const fileInfo = document.getElementById('file-info');
+    const fileInput = document.getElementById('image-file');
+    const uploadButton = document.getElementById('upload-button');
+    const uploadArea = document.getElementById('upload-area');
+    if (fileInfo) fileInfo.classList.add('hidden');
+    if (uploadButton) uploadButton.disabled = true;
+    if (fileInput) fileInput.value = '';
+    if (uploadArea) uploadArea.classList.remove('dragover');
 }
 
 // 处理文件选择
 function handleFileSelect(file) {
-    if (!file) return;
+    if (!file) {
+        resetFileSelection();
+        return;
+    }
 
     // 文件类型检查
     const allowedTypes = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
     if (!file.type.startsWith('image/') || !allowedTypes.includes(file.type.toLowerCase())) {
         showNotification('请选择有效的图片文件（JPG、PNG、GIF、WebP）', 'error');
+        resetFileSelection();
         return;
     }
 
@@ -2049,11 +1917,13 @@ function handleFileSelect(file) {
     const maxSize = 10 * 1024 * 1024;
     if (file.size > maxSize) {
         showNotification('图片大小不能超过10MB', 'error');
+        resetFileSelection();
         return;
     }
 
     if (file.size === 0) {
         showNotification('文件为空，请选择有效的图片文件', 'error');
+        resetFileSelection();
         return;
     }
 
@@ -2061,11 +1931,12 @@ function handleFileSelect(file) {
     document.getElementById('file-name').textContent = file.name;
     document.getElementById('file-size').textContent = formatFileSize(file.size);
     document.getElementById('file-info').classList.remove('hidden');
-    
+
     // 检查账号选择
     const accountSelect = document.getElementById('upload-account');
-    if (accountSelect && accountSelect.value) {
-        document.getElementById('upload-button').disabled = false;
+    const uploadButton = document.getElementById('upload-button');
+    if (uploadButton) {
+        uploadButton.disabled = !(accountSelect && accountSelect.value);
     }
 }
 
@@ -2076,80 +1947,6 @@ function formatFileSize(bytes) {
     const sizes = ['Bytes', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
-}
-
-// 更新图片列表显示
-function updateImagesList(images) {
-    const container = document.getElementById('images-list');
-    const emptyMessage = document.getElementById('empty-images');
-    const imagesCount = document.getElementById('images-count');
-    
-    if (!container) return;
-    
-    imagesCount.textContent = images ? images.length : 0;
-    
-    if (!images || images.length === 0) {
-        container.classList.add('hidden');
-        emptyMessage.classList.remove('hidden');
-        return;
-    }
-    
-    container.classList.remove('hidden');
-    emptyMessage.classList.add('hidden');
-    
-    container.innerHTML = images.map((image, index) => `
-        <div class="group relative bg-white rounded-lg border border-gray-200 overflow-hidden hover:shadow-md transition-all duration-200">
-            <div class="aspect-square bg-gray-100 overflow-hidden">
-                <img src="${image.url}" 
-                     alt="${image.name || '图片'}" 
-                     class="w-full h-full object-cover transition-transform duration-300 group-hover:scale-105 cursor-pointer"
-                     onclick="previewImage('${image.url}')"
-                     loading="lazy"
-                     onerror="this.src='data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAwIiBoZWlnaHQ9IjIwMCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48cmVjdCB3aWR0aD0iMTAwJSIgaGVpZ2h0PSIxMDAlIiBmaWxsPSIjZjNmNGY2Ii8+PHRleHQgeD0iNTAlIiB5PSI1MCUiIGZvbnQtZmFtaWx5PSJBcmlhbCwgc2Fucy1zZXJpZiIgZm9udC1zaXplPSIxNCIgZmlsbD0iIzljYTNkYiIgdGV4dC1hbmNob3I9Im1pZGRsZSIgZHk9Ii4zZW0iPuWbvueJh+WKoOi9veWksei0pTwvdGV4dD48L3N2Zz4='" referrerpolicy="no-referrer">
-            </div>
-            
-            <div class="p-3">
-                <p class="text-sm font-medium text-gray-800 truncate" title="${image.name || '未命名'}">
-                    ${image.name || '未命名'}
-                </p>
-                <p class="text-xs text-gray-500 mt-1 truncate">
-                    ${image.upload_account || '未知用户'}
-                </p>
-                <p class="text-xs text-gray-400 mt-1">
-                    ${image.upload_time || ''}
-                </p>
-            </div>
-            
-            <!-- 悬停操作按钮 -->
-            <div class="absolute inset-0 bg-black bg-opacity-0 group-hover:bg-opacity-20 transition-all duration-200 flex items-center justify-center opacity-0 group-hover:opacity-100">
-                <div class="flex space-x-2">
-                    <button onclick="copyImageUrl('${image.url}')" 
-                            class="p-2 bg-white rounded-full shadow-lg hover:bg-gray-50 transition transform hover:scale-110"
-                            title="复制URL">
-                        <i class="fa fa-copy text-gray-700 text-sm"></i>
-                    </button>
-                    <button onclick="previewImage('${image.url}')" 
-                            class="p-2 bg-white rounded-full shadow-lg hover:bg-gray-50 transition transform hover:scale-110"
-                            title="预览">
-                        <i class="fa fa-eye text-blue-600 text-sm"></i>
-                    </button>
-                    <button onclick="deleteImage('${image.url}')" 
-                            class="p-2 bg-white rounded-full shadow-lg hover:bg-gray-50 transition transform hover:scale-110"
-                            title="删除">
-                        <i class="fa fa-trash text-red-600 text-sm"></i>
-                    </button>
-                </div>
-            </div>
-        </div>
-    `).join('');
-}
-
-// 图片预览功能
-function previewImage(image) {
-    currentPreviewUrl = image.url;
-    document.getElementById('preview-image').src = image;
-    document.getElementById('preview-title').textContent = image.name || '图片预览';
-    document.getElementById('image-preview-modal').classList.remove('hidden');
 }
 
 function deleteImage(url) {
@@ -2185,10 +1982,13 @@ function deleteImage(url) {
     });
 }
 
+// 图片预览功能（兼容传入 URL 字符串或图片对象）
 function previewImage(image) {
-    currentPreviewUrl = image.url;
-    document.getElementById('preview-image').src = image;
-    document.getElementById('preview-title').textContent = image.name || '图片预览';
+    const url = (typeof image === 'string') ? image : ((image && image.url) || '');
+    const name = (typeof image === 'object' && image && image.name) ? image.name : '';
+    currentPreviewUrl = url;
+    document.getElementById('preview-image').src = url;
+    document.getElementById('preview-title').textContent = name || '图片预览';
     document.getElementById('image-preview-modal').classList.remove('hidden');
 }
 
@@ -2246,17 +2046,15 @@ function scrollLogsToBottom() {
 function toggleAutoScroll() {
     autoScrollEnabled = !autoScrollEnabled;
     const btn = document.getElementById('auto-scroll-btn');
-    
+
     if (btn) {
         if (autoScrollEnabled) {
-            btn.classList.remove('bg-gray-600');
-            btn.classList.add('bg-green-600');
-            btn.innerHTML = '<i class="fa fa-magic mr-1"></i>自动滚动';
+            btn.classList.add('is-active');
+            btn.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i><span>自动滚动</span>';
             showNotification('已启用自动滚动', 'success');
         } else {
-            btn.classList.remove('bg-green-600');
-            btn.classList.add('bg-gray-600');
-            btn.innerHTML = '<i class="fa fa-pause mr-1"></i>暂停滚动';
+            btn.classList.remove('is-active');
+            btn.innerHTML = '<i class="fa-solid fa-pause"></i><span>暂停滚动</span>';
             showNotification('已暂停自动滚动', 'warning');
         }
     }
@@ -2273,7 +2071,12 @@ function fetchLogs() {
             } else {
                 const logContainer = document.getElementById('log-container');
                 if (logContainer) {
-                    logContainer.innerHTML = '<div class="text-center text-gray-500 py-8">暂无日志</div>';
+                    logContainer.innerHTML = `
+            <div class="empty-state" style="padding:32px 12px;">
+                <div class="empty-icon" style="background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.08);color:#64748b;"><i class="fa-regular fa-file-lines"></i></div>
+                <strong style="color:#94a3b8;">暂无日志</strong>
+                <p>机器人启动后将在此输出运行记录</p>
+            </div>`;
                 }
                 updateLogStats(0, 0);
             }
@@ -2282,7 +2085,12 @@ function fetchLogs() {
             console.error('获取日志失败:', error);
             const logContainer = document.getElementById('log-container');
             if (logContainer) {
-                logContainer.innerHTML = '<div class="text-center text-red-500 py-8">获取日志失败</div>';
+                logContainer.innerHTML = `
+                    <div class="empty-state compact">
+                        <div class="empty-icon" style="color:var(--danger);"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                        <strong>获取日志失败</strong>
+                        <p>请检查服务状态或稍后重试</p>
+                    </div>`;
             }
         });
 }
@@ -2362,14 +2170,11 @@ function githubLogout() {
 function loadDiscussions() {
     const container = document.getElementById('discussions-list');
     if (!container) return;
-    
+
     container.innerHTML = `
-        <div class="text-center text-gray-500 py-8">
-            <i class="fa fa-spinner fa-spin text-2xl mb-2"></i>
-            <p>加载讨论列表中...</p>
-        </div>
+        <div class="loading-row"><i class="fa-solid fa-circle-notch fa-spin"></i>加载讨论列表中…</div>
     `;
-    
+
     fetch('/api/github/discussions?limit=20')
         .then(response => response.json())
         .then(data => {
@@ -2379,8 +2184,9 @@ function loadDiscussions() {
                 checkGitHubAuth();
             } else {
                 container.innerHTML = `
-                    <div class="text-center text-red-500 py-8">
-                        <i class="fa fa-exclamation-triangle text-2xl mb-2"></i>
+                    <div class="empty-state compact">
+                        <div class="empty-icon"><i class="fa-solid fa-triangle-exclamation"></i></div>
+                        <strong>加载失败</strong>
                         <p>${data.message || '加载讨论列表失败'}</p>
                     </div>
                 `;
@@ -2390,9 +2196,10 @@ function loadDiscussions() {
         .catch(error => {
             console.error('加载讨论列表失败:', error);
             container.innerHTML = `
-                <div class="text-center text-red-500 py-8">
-                    <i class="fa fa-exclamation-triangle text-2xl mb-2"></i>
-                    <p>加载讨论列表失败，请检查网络连接</p>
+                <div class="empty-state compact">
+                    <div class="empty-icon"><i class="fa-solid fa-plug-circle-xmark"></i></div>
+                    <strong>加载失败</strong>
+                    <p>请检查网络连接后重试</p>
                 </div>
             `;
             checkGitHubAuth();
@@ -2453,53 +2260,48 @@ function deleteComment(discussionNumber, commentId, commentAuthor) {
 function updateDiscussionsList() {
     const container = document.getElementById('discussions-list');
     if (!container) return;
-    
+
     if (!currentDiscussions || currentDiscussions.length === 0) {
         container.innerHTML = `
-            <div class="text-center text-gray-500 py-8">
-                <i class="fa fa-comments text-3xl mb-3"></i>
-                <p>暂无讨论</p>
-                <p class="text-sm mt-2">点击"新建讨论"创建第一个讨论</p>
+            <div class="empty-state compact">
+                <div class="empty-icon"><i class="fa-regular fa-comments"></i></div>
+                <strong>暂无讨论</strong>
+                <p>点击「新建讨论」创建第一个讨论</p>
             </div>
         `;
         return;
     }
-    
+
     container.innerHTML = currentDiscussions.map(discussion => `
-        <div class="border border-gray-200 rounded-lg p-4 mb-4 bg-white hover:bg-gray-50 transition cursor-pointer" 
-             onclick="showDiscussionDetail(${discussion.number})">
-            <div class="flex items-center justify-between mb-3">
-                <div class="flex items-center space-x-3">
-                    <img src="${discussion.user.avatar_url}" alt="${discussion.user.login}" class="w-8 h-8 rounded-full">
-                    <div>
-                        <h4 class="text-lg font-medium text-gray-800">${discussion.title}</h4>
-                        <p class="text-sm text-gray-600">
-                            由 <span class="font-medium">${discussion.user.login}</span> 创建于 ${formatDate(discussion.created_at)}
+        <article class="discussion-item" role="button" tabindex="0"
+                 onclick="showDiscussionDetail(${discussion.number})"
+                 onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();showDiscussionDetail(${discussion.number});}">
+            <div class="list-item-head" style="margin-bottom:10px;">
+                <div class="row" style="min-width:0;">
+                    <img src="${discussion.user.avatar_url}" alt="${discussion.user.login}" class="discussion-avatar">
+                    <div style="min-width:0;">
+                        <h4 style="margin:0;font-size:14.5px;font-weight:700;color:var(--ink);word-break:break-word;">${discussion.title}</h4>
+                        <p class="field-hint" style="margin:3px 0 0;">
+                            <i class="fa-solid fa-user"></i> ${discussion.user.login} · ${formatDate(discussion.created_at)}
                         </p>
                     </div>
                 </div>
-                <div class="flex items-center space-x-2">
-                    <span class="px-2 py-1 text-xs rounded-full ${discussion.state === 'open' ? 'bg-green-100 text-green-800' : 'bg-gray-100 text-gray-800'}">
+                <div class="row-wrap">
+                    <span class="badge ${discussion.state === 'open' ? 'badge-success' : 'badge-neutral'}">
                         ${discussion.state === 'open' ? '开放' : '已关闭'}
                     </span>
-                    <span class="flex items-center text-sm text-gray-500">
-                        <i class="fa fa-comment mr-1"></i> ${discussion.comments_count}
-                    </span>
+                    <span class="field-hint"><i class="fa-regular fa-comment"></i> ${discussion.comments_count}</span>
                 </div>
             </div>
-            
-            <div class="text-gray-600 line-clamp-2 markdown-body">
-                ${marked.parse(discussion.body || '无内容')}
-            </div>
-            
+
+            <div class="body-preview markdown-body">${marked.parse(discussion.body || '无内容')}</div>
+
             ${discussion.labels && discussion.labels.length > 0 ? `
-            <div class="mt-3 flex flex-wrap gap-1">
-                ${discussion.labels.map(label => `
-                    <span class="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded">${label}</span>
-                `).join('')}
+            <div class="row-wrap mt-3">
+                ${discussion.labels.map(label => `<span class="badge badge-info">${label}</span>`).join('')}
             </div>
             ` : ''}
-        </div>
+        </article>
     `).join('');
     initCodeHighlighting();
 }
@@ -2525,81 +2327,67 @@ function showDiscussionDetail(discussionNumber) {
 
 function updateDiscussionDetailModal() {
     if (!currentDiscussion) return;
-    
+
     document.getElementById('discussion-title').textContent = currentDiscussion.title || '无标题';
     document.getElementById('current-discussion-number').value = currentDiscussion.number;
-    
+
     const content = marked.parse((currentDiscussion.body || '无内容'));
-    
+
     document.getElementById('discussion-content').innerHTML = `
-        <div class="flex items-center space-x-3 mb-4">
-            <img src="${currentDiscussion.user.avatar_url}" alt="${currentDiscussion.user.login}" class="w-10 h-10 rounded-full">
+        <div class="row-wrap" style="margin-bottom:14px;">
+            <img src="${currentDiscussion.user.avatar_url}" alt="${currentDiscussion.user.login}" class="discussion-avatar">
             <div>
-                <p class="font-medium text-gray-800">${currentDiscussion.user.login}</p>
-                <p class="text-sm text-gray-600">${formatDate(currentDiscussion.created_at)}</p>
+                <p style="margin:0;font-weight:600;color:var(--ink);">${currentDiscussion.user.login}</p>
+                <p class="field-hint" style="margin:0;">${formatDate(currentDiscussion.created_at)}</p>
             </div>
         </div>
-        <div class="prose max-w-none markdown-body">
-            ${content}
-        </div>
+        <div class="markdown-body">${content}</div>
     `;
-    
+
     // 更新评论列表
     const commentsContainer = document.getElementById('comments-list');
     if (currentDiscussion.comments && currentDiscussion.comments.length > 0) {
         commentsContainer.innerHTML = currentDiscussion.comments.map(comment => {
             const commentBody = marked.parse(comment.body || '');
-            
-            // 获取当前用户信息以决定是否显示删除按钮
-            let deleteButton = '';
-            fetch('/api/github/user')
-                .then(response => response.json())
-                .then(userData => {
-                    if (userData.success && userData.user.login === comment.user.login) {
-                        const deleteBtn = document.getElementById(`delete-comment-${comment.id}`);
-                        if (deleteBtn) {
-                            deleteBtn.style.display = 'block';
-                        }
-                    }
-                })
-                .catch(console.error);
-            
+
             return `
-            <div class="border border-gray-200 rounded-lg p-4 bg-white relative">
-                <div class="flex items-center space-x-3 mb-3">
-                    <img src="${comment.user.avatar_url}" alt="${comment.user.login}" class="w-8 h-8 rounded-full">
-                    <div class="flex-1">
-                        <p class="font-medium text-gray-800">${comment.user.login}</p>
-                        <p class="text-sm text-gray-600">${formatDate(comment.created_at)}</p>
+            <article class="list-item">
+                <div class="list-item-head" style="margin-bottom:6px;">
+                    <div class="row">
+                        <img src="${comment.user.avatar_url}" alt="${comment.user.login}" class="discussion-avatar">
+                        <div>
+                            <p style="margin:0;font-weight:600;color:var(--ink);font-size:13px;">${comment.user.login}</p>
+                            <p class="field-hint" style="margin:0;">${formatDate(comment.created_at)}</p>
+                        </div>
                     </div>
-                    <button 
+                    <button type="button"
                         data-comment-id="${comment.id}"
                         onclick="deleteComment(${currentDiscussion.number}, ${comment.id}, '${comment.user.login}')"
-                        class="delete-comment-btn opacity-0 group-hover:opacity-100 transition-all duration-300 transform translate-x-2 group-hover:translate-x-0 
-                               bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 
-                               text-white px-4 py-2 rounded-lg shadow-lg hover:shadow-xl 
-                               flex items-center space-x-2 text-sm font-medium
-                               hover:scale-105 active:scale-95 transition-all duration-200"
+                        class="delete-comment-btn btn btn-sm btn-danger"
                         title="删除评论"
-                        style="display: none;"
-                    >
-                        <i class="fa fa-trash-alt text-xs"></i>
-                        <span>删除</span>
+                        style="display:none;">
+                        <i class="fa-solid fa-trash-can"></i>删除
                     </button>
                 </div>
-                <div class="text-gray-700 whitespace-pre-wrap markdown-body">${commentBody}</div>
-            </div>
+                <div class="markdown-body">${commentBody}</div>
+            </article>
             `;
         }).join('');
     } else {
-        commentsContainer.innerHTML = '<p class="text-gray-500 text-center py-4">暂无评论</p>';
+        commentsContainer.innerHTML = `
+            <div class="empty-state compact">
+                <div class="empty-icon"><i class="fa-regular fa-comment-dots"></i></div>
+                <strong>暂无评论</strong>
+                <p>在下方发表第一条评论</p>
+            </div>
+        `;
     }
-    
+
     // 延迟检查并显示删除按钮
     setTimeout(() => {
         checkAndShowDeleteButtons();
     }, 500);
-    
+
     initCodeHighlighting();
 }
 
@@ -2927,7 +2715,7 @@ function startQrcodePolling(qrcodeKey) {
                     
                     
                     document.getElementById('qrcode-status').innerHTML = 
-                        `<span class="text-green-600">登录成功！用户信息已自动填充</span>`;
+                        `<span class="text-success">登录成功！用户信息已自动填充</span>`;
                     
                     showNotification('扫码登录成功，用户信息已自动填充', 'success');
                 } else {
@@ -2938,10 +2726,10 @@ function startQrcodePolling(qrcodeKey) {
                             statusElement.textContent = '等待扫码...';
                             break;
                         case 86090:
-                            statusElement.innerHTML = '<span class="text-yellow-600">已扫码，请在手机上确认登录</span>';
+                            statusElement.innerHTML = '<span class="text-warning">已扫码，请在手机上确认登录</span>';
                             break;
                         case 86038:
-                            statusElement.innerHTML = '<span class="text-red-600">二维码已过期，请重新扫码</span>';
+                            statusElement.innerHTML = '<span class="text-danger">二维码已过期，请重新扫码</span>';
                             clearInterval(window.qrcodePolling);
                             window.qrcodePolling = null;
                             document.getElementById('start-qrcode-login').classList.remove('hidden');
@@ -2999,98 +2787,92 @@ function loadAccounts() {
 function updateAccountsList(accounts) {
     const container = document.getElementById('accounts-list');
     if (!container) return;
-    
+
     if (!accounts || accounts.length === 0) {
         container.innerHTML = `
-            <div class="text-center text-gray-500 py-8">
-                <i class="fa fa-users text-3xl mb-3"></i>
-                <p>暂无账号</p>
-                <p class="text-sm mt-2">点击右上角"添加账号"按钮来添加第一个账号</p>
-            </div>
-        `;
+            <div class="empty-state">
+                <div class="empty-icon"><i class="fa-solid fa-users"></i></div>
+                <strong>还没有账号</strong>
+                <p>点击右上角「添加账号」添加第一个 B 站账号</p>
+                <button class="btn btn-primary" onclick="showAddAccountModal()">
+                    <i class="fa-solid fa-plus"></i>添加账号
+                </button>
+            </div>`;
         return;
     }
-    
-    container.innerHTML = accounts.map((account, index) => `
-        <div class="border border-gray-200 rounded-lg p-4 mb-4 bg-white hover:bg-gray-50 transition">
-            <div class="flex items-center justify-between mb-3">
-                <div class="flex items-center space-x-3">
-                    <div class="w-3 h-3 rounded-full ${account.enabled ? 'bg-green-500' : 'bg-gray-400'}"></div>
-                    <h4 class="text-lg font-medium text-gray-800">${account.name}</h4>
-                    <span class="text-sm px-2 py-1 bg-blue-100 text-blue-800 rounded">UID: ${account.config.self_uid}</span>
+
+    container.innerHTML = accounts.map((account, index) => {
+        const keywordCount = Object.keys(account.keyword || {}).length;
+        const keywordPreview = Object.entries(account.keyword || {}).slice(0, 3).map(([keyword, reply]) => `
+            <div class="keyword-row">
+                <div style="min-width:0;">
+                    <span class="kw">${keyword}</span>
+                    <div class="reply">${reply}</div>
                 </div>
-                <div class="flex items-center space-x-2">
-                    <button onclick="toggleAccount(${index})" 
-                            class="px-3 py-1 text-sm ${account.enabled ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-green-600 hover:bg-green-700'} text-white rounded transition">
-                        ${account.enabled ? '禁用' : '启用'}
-                    </button>
-                    <button onclick="editAccount(${index})" 
-                            class="px-3 py-1 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded transition">
-                        编辑
-                    </button>
-                    <button onclick="deleteAccount(${index})" 
-                            class="px-3 py-1 text-sm bg-red-600 hover:bg-red-700 text-white rounded transition">
-                        删除
-                    </button>
-                </div>
-            </div>
-            
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
-                <div>
-                    <span class="text-gray-600">艾特用户:</span>
-                    <span class="ml-2 font-medium ${account.at_user ? 'text-green-600' : 'text-red-600'}">
-                        ${account.at_user ? '开启' : '关闭'}
+            </div>`).join('');
+
+        return `
+        <div class="list-item">
+            <div class="list-item-head">
+                <div class="list-item-title">
+                    <span class="dot ${account.enabled ? 'green' : ''}"></span>
+                    <h4>${account.name}</h4>
+                    <span class="badge badge-info">UID ${account.config.self_uid}</span>
+                    <span class="badge ${account.enabled ? 'badge-success' : 'badge-neutral'}">
+                        ${account.enabled ? '已启用' : '已禁用'}
                     </span>
                 </div>
-                <div>
-                    <span class="text-gray-600">自动关注:</span>
-                    <span class="ml-2 font-medium ${account.auto_focus ? 'text-green-600' : 'text-red-600'}">
-                        ${account.auto_focus ? '开启' : '关闭'}
-                    </span>
-                </div>
-                <div>
-                    <span class="text-gray-600">关键词数量:</span>
-                    <span class="ml-2 font-medium">${Object.keys(account.keyword || {}).length}</span>
-                </div>
-            </div>
-            
-            ${Object.keys(account.keyword || {}).length > 0 ? `
-            <div class="mt-3 pt-3 border-t border-gray-200">
-                <h5 class="text-sm font-medium text-gray-700 mb-2">账号关键词:</h5>
-                <div class="space-y-1">
-                    ${Object.entries(account.keyword).map(([keyword, reply]) => `
-                        <div class="flex items-center justify-between p-3 border border-gray-200 rounded-lg bg-white">
-                            <div class="flex-1">
-                                <div class="font-medium text-gray-800">${keyword}</div>
-                                <div class="text-sm text-gray-600">${reply}</div>
-                            </div>
-                        </div>
-                    `).join('')}
+                <div class="list-actions">
+                    <button class="btn ${account.enabled ? 'btn-warning' : 'btn-success'} btn-sm" onclick="toggleAccount(${index})">
+                        <i class="fa-solid ${account.enabled ? 'fa-pause' : 'fa-play'}"></i>${account.enabled ? '禁用' : '启用'}
+                    </button>
+                    <button class="btn btn-secondary btn-sm" onclick="editAccount(${index})">
+                        <i class="fa-solid fa-pen"></i>编辑
+                    </button>
+                    <button class="btn btn-ghost btn-sm" style="color:var(--danger);" onclick="deleteAccount(${index})">
+                        <i class="fa-solid fa-trash-can"></i>删除
+                    </button>
                 </div>
             </div>
-            ` : ''}
-        </div>
-    `).join('');
+
+            <div class="row-wrap mb-2">
+                <span class="chip"><i class="fa-solid fa-at"></i>艾特用户 ${account.at_user ? '开启' : '关闭'}</span>
+                <span class="chip"><i class="fa-solid fa-user-plus"></i>自动关注 ${account.auto_focus ? '开启' : '关闭'}</span>
+                <span class="chip"><i class="fa-solid fa-key"></i>关键词 ${keywordCount} 条</span>
+                ${account.auto_reply_follow ? '<span class="chip"><i class="fa-solid fa-handshake"></i>关注回复</span>' : ''}
+            </div>
+
+            ${keywordCount > 0 ? `<div class="list-item-meta" style="display:block;padding-top:10px;">
+                <p class="field-hint mb-2">关键词预览</p>
+                ${keywordPreview}
+                ${keywordCount > 3 ? `<p class="field-hint mt-2">还有 ${keywordCount - 3} 条，请在「编辑」中查看</p>` : ''}
+            </div>` : ''}
+        </div>`;
+    }).join('');
 }
 
 function updateGlobalKeywordsList(keywords) {
     const container = document.getElementById('global-keywords-list');
     if (!container) return;
-    
+
     if (!keywords || Object.keys(keywords).length === 0) {
-        container.innerHTML = '<div class="text-center text-gray-500 py-4">暂无全局关键词</div>';
+        container.innerHTML = `
+            <div class="empty-state compact">
+                <div class="empty-icon"><i class="fa-solid fa-key"></i></div>
+                <strong>暂无全局关键词</strong>
+                <p>添加后对所有账号生效</p>
+            </div>`;
         return;
     }
-    
+
     container.innerHTML = Object.entries(keywords).map(([keyword, reply]) => `
-        <div class="flex items-center justify-between p-3 border border-gray-200 rounded-lg mb-2">
-            <div class="flex-1">
-                <div class="font-medium text-gray-800">${keyword}</div>
-                <div class="text-sm text-gray-600">${reply}</div>
+        <div class="keyword-row">
+            <div style="min-width:0;">
+                <span class="kw">${keyword}</span>
+                <div class="reply">${reply}</div>
             </div>
-            <button onclick="deleteGlobalKeyword('${keyword}')" 
-                    class="ml-4 px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700 transition">
-                <i class="fa fa-trash"></i>
+            <button class="icon-btn" style="color:var(--danger);flex:0 0 auto;" onclick="deleteGlobalKeyword(${JSON.stringify(keyword)})" aria-label="删除关键词">
+                <i class="fa-solid fa-trash-can"></i>
             </button>
         </div>
     `).join('');
@@ -3184,45 +2966,50 @@ function hideEditAccountModal() {
 function updateAccountKeywordsList(keywords) {
     const container = document.getElementById('edit-account-keywords-list');
     if (!container) return;
-    
+
     if (!keywords || Object.keys(keywords).length === 0) {
-        container.innerHTML = '<div class="text-center text-gray-500 py-4">暂无关键词</div>';
+        container.innerHTML = `
+            <div class="empty-state compact">
+                <div class="empty-icon"><i class="fa-solid fa-key"></i></div>
+                <strong>暂无关键词</strong>
+                <p>添加关键词后，命中消息将自动回复</p>
+            </div>`;
         return;
     }
-    
-    container.innerHTML = Object.entries(keywords).map(([keyword, reply]) => {
-        // 使用数据属性存储原始数据，避免转义问题
-        return `
-        <div class="keyword-item flex items-start justify-between p-3 border border-gray-200 rounded-lg bg-white mb-2" 
-             data-keyword="${encodeURIComponent(keyword)}" 
+
+    // 使用数据属性存储原始数据，避免转义问题
+    container.innerHTML = Object.entries(keywords).map(([keyword, reply]) => `
+        <div class="keyword-row"
+             data-keyword="${encodeURIComponent(keyword)}"
              data-reply="${encodeURIComponent(reply)}">
-            <div class="flex-1">
-                <div class="font-medium text-gray-800 mb-2">${keyword}</div>
-                <div class="text-sm text-gray-600 whitespace-pre-wrap bg-gray-50 p-2 rounded border">${reply}</div>
+            <div style="min-width:0;">
+                <span class="kw">${keyword}</span>
+                <div class="reply">${reply}</div>
             </div>
-            <div class="flex space-x-2 ml-4 self-start">
-                <button type="button" class="edit-keyword-btn px-3 py-1 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 transition">
-                    <i class="fa fa-edit"></i>
+            <div class="list-actions">
+                <button type="button" class="icon-btn edit-keyword-btn" aria-label="编辑关键词">
+                    <i class="fa-solid fa-pen"></i>
                 </button>
-                <button type="button" class="delete-keyword-btn px-3 py-1 bg-red-600 text-white rounded text-sm hover:bg-red-700 transition">
-                    <i class="fa fa-trash"></i>
+                <button type="button" class="icon-btn is-danger delete-keyword-btn" aria-label="删除关键词">
+                    <i class="fa-solid fa-trash-can"></i>
                 </button>
             </div>
         </div>
-        `;
-    }).join('');
-    
-    // 为按钮添加事件监听（使用事件委托）
-    container.addEventListener('click', function(e) {
-        const keywordItem = e.target.closest('.keyword-item');
-        if (!keywordItem) return;
-        
+    `).join('');
+
+    // 事件委托只需绑定一次
+    if (container.dataset.delegated === '1') return;
+    container.dataset.delegated = '1';
+    container.addEventListener('click', function (e) {
+        const keywordRow = e.target.closest('.keyword-row');
+        if (!keywordRow) return;
+
+        const keyword = decodeURIComponent(keywordRow.getAttribute('data-keyword') || '');
+        const reply = decodeURIComponent(keywordRow.getAttribute('data-reply') || '');
+
         if (e.target.closest('.edit-keyword-btn')) {
-            const keyword = decodeURIComponent(keywordItem.getAttribute('data-keyword'));
-            const reply = decodeURIComponent(keywordItem.getAttribute('data-reply'));
             openEditKeywordModal(keyword, reply);
         } else if (e.target.closest('.delete-keyword-btn')) {
-            const keyword = decodeURIComponent(keywordItem.getAttribute('data-keyword'));
             deleteAccountKeyword(keyword);
         }
     });
@@ -3695,11 +3482,19 @@ function fetchBotStatus() {
             const lastUpdate = document.getElementById('last-update');
             
             if (statusText) {
-                if (data.running) {
-                    statusText.innerHTML = '<span class="text-green-600 flex items-center"><i class="fa fa-circle animate-pulse mr-2"></i>运行中</span>';
-                } else {
-                    statusText.innerHTML = '<span class="text-red-600 flex items-center"><i class="fa fa-circle mr-2"></i>已停止</span>';
-                }
+                statusText.className = 'stat-value is-text status-inline ' + (data.running ? 'is-on' : 'is-off');
+                statusText.innerHTML = data.running
+                    ? '<i class="fa-solid fa-circle"></i> 运行中'
+                    : '<i class="fa-solid fa-circle"></i> 已停止';
+            }
+
+            updateTopbarStatus(!!data.running);
+
+            const navBadge = document.getElementById('nav-accounts-badge');
+            if (navBadge) {
+                const count = data.total_accounts_count || 0;
+                navBadge.textContent = count;
+                navBadge.classList.toggle('hidden', count === 0);
             }
             
             if (startBtn) startBtn.disabled = data.running;
@@ -3728,9 +3523,23 @@ function fetchBotStatus() {
             console.error('获取机器人状态失败:', error);
             const statusText = document.getElementById('status-text');
             if (statusText) {
-                statusText.innerHTML = '<span class="text-red-600">获取状态失败</span>';
+                statusText.className = 'stat-value is-text status-inline is-unknown';
+                statusText.innerHTML = '<i class="fa-solid fa-circle"></i> 获取失败';
             }
+            updateTopbarStatus(null);
         });
+}
+
+// 顶栏状态胶囊
+function updateTopbarStatus(running) {
+    const pill = document.getElementById('topbar-status');
+    if (!pill) return;
+    pill.classList.toggle('is-on', running === true);
+    pill.classList.toggle('is-off', running === false);
+    const label = pill.querySelector('.label');
+    if (label) {
+        label.textContent = running === true ? '机器人运行中' : (running === false ? '机器人已停止' : '连接异常');
+    }
 }
 
 function updateProgressCircle(elementId, targetPercentage) {
@@ -3775,7 +3584,7 @@ function updateProgressCircle(elementId, targetPercentage) {
             circle.setAttribute('stroke', '#f59e0b'); // 黄色
         } else {
             // 恢复默认颜色
-            if (elementId === 'cpu-progress') circle.setAttribute('stroke', '#3b82f6');
+            if (elementId === 'cpu-progress') circle.setAttribute('stroke', '#4f46e5');
             if (elementId === 'mem-progress') circle.setAttribute('stroke', '#10b981');
             if (elementId === 'disk-progress') circle.setAttribute('stroke', '#8b5cf6');
         }
@@ -3912,31 +3721,44 @@ function updateSystemStats() {
         .then(data => {
             if (data.success && data.data) {
                 const stats = data.data;
-                    
+                const cpu = stats.cpu || {};
+                const memory = stats.memory || {};
+                const disk = stats.disk || {};
+                const cpuUsage = Number(cpu.usage ?? 0);
+                const memUsage = Number(memory.usage ?? 0);
+                const diskUsage = Number(disk.usage ?? 0);
+
                 // 更新CPU信息
-                updateProgressCircle('cpu-progress', stats.cpu.usage);
-                document.getElementById('cpu-usage').textContent = `${stats.cpu.usage}%`;
-                document.getElementById('cpu-cores').textContent = 
-                    `${stats.cpu.physical_cores}物理 / ${stats.cpu.logical_cores}逻辑`;
-                    
+                updateProgressCircle('cpu-progress', cpuUsage);
+                document.getElementById('cpu-usage').textContent = `${cpuUsage}%`;
+                const physicalCores = cpu.physical_cores ?? cpu.logical_cores ?? '-';
+                const logicalCores = cpu.logical_cores ?? cpu.physical_cores ?? '-';
+                document.getElementById('cpu-cores').textContent =
+                    `${physicalCores}物理 / ${logicalCores}逻辑`;
+
                 // 更新内存信息
-                updateProgressCircle('mem-progress', stats.memory.usage);
-                document.getElementById('mem-usage').textContent = `${stats.memory.usage}%`;
-                document.getElementById('mem-details').textContent = 
-                    `${stats.memory.used}/${stats.memory.total} GB`;
-                
+                updateProgressCircle('mem-progress', memUsage);
+                document.getElementById('mem-usage').textContent = `${memUsage}%`;
+                document.getElementById('mem-details').textContent =
+                    `${Number(memory.used ?? 0)}/${Number(memory.total ?? 0)} GB`;
+
                 // 更新磁盘信息
-                updateProgressCircle('disk-progress', stats.disk.usage);
-                document.getElementById('disk-usage').textContent = `${stats.disk.usage}%`;
-                document.getElementById('disk-details').textContent = 
-                    `${stats.disk.used}/${stats.disk.total} GB`;
-                    
+                updateProgressCircle('disk-progress', diskUsage);
+                document.getElementById('disk-usage').textContent = `${diskUsage}%`;
+                document.getElementById('disk-details').textContent =
+                    `${Number(disk.used ?? 0)}/${Number(disk.total ?? 0)} GB`;
+
                 // 更新系统负载 (仅Unix系统)
-                if (stats.load_avg) {
-                    document.getElementById('load-average-container').style.display = 'block';
-                    document.getElementById('load-1').textContent = stats.load_avg[0];
-                    document.getElementById('load-5').textContent = stats.load_avg[1];
-                    document.getElementById('load-15').textContent = stats.load_avg[2];
+                const loadContainer = document.getElementById('load-average-container');
+                if (loadContainer) {
+                    if (Array.isArray(stats.load_avg) && stats.load_avg.length >= 3) {
+                        loadContainer.style.display = 'block';
+                        document.getElementById('load-1').textContent = stats.load_avg[0];
+                        document.getElementById('load-5').textContent = stats.load_avg[1];
+                        document.getElementById('load-15').textContent = stats.load_avg[2];
+                    } else {
+                        loadContainer.style.display = 'none';
+                    }
                 }
 
                 updateNetworkData(stats);
@@ -3946,93 +3768,97 @@ function updateSystemStats() {
 }
 
 // 启动机器人
-function startBot() {
-    fetch('/api/start_bot', { method: 'POST' })
+// 按钮忙碌态：防止重复提交
+function setButtonBusy(btn, busy) {
+    if (!btn || !btn.classList || !btn.classList.contains('btn')) return;
+    if (busy) {
+        btn.dataset.label = btn.innerHTML;
+        btn.setAttribute('aria-busy', 'true');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i>处理中…';
+    } else {
+        btn.removeAttribute('aria-busy');
+        btn.disabled = false;
+        if (btn.dataset.label) btn.innerHTML = btn.dataset.label;
+    }
+}
+
+// 内联 onclick 场景下取得触发按钮
+function activeButton() {
+    const ev = window.event;
+    if (ev && ev.target && ev.target.closest) {
+        const btn = ev.target.closest('button');
+        if (btn) return btn;
+    }
+    return document.activeElement;
+}
+
+// 通用控制请求：统一处理忙碌态、提示与状态刷新
+function runBotCommand(url, failMessage) {
+    const btn = activeButton();
+    setButtonBusy(btn, true);
+    return fetch(url, { method: 'POST' })
         .then(response => response.json())
         .then(data => {
             showNotification(data.message, data.success ? 'success' : 'error');
-            if (data.success) {
-                fetchBotStatus();
-            }
+            if (data.success) fetchBotStatus();
         })
         .catch(error => {
-            console.error('启动机器人失败:', error);
-            showNotification('启动机器人失败，请检查网络连接', 'error');
+            console.error(failMessage, error);
+            showNotification(failMessage + '，请检查网络连接', 'error');
+        })
+        .finally(() => {
+            setButtonBusy(btn, false);
         });
+}
+
+// 启动机器人
+function startBot() {
+    return runBotCommand('/api/start_bot', '启动机器人失败');
 }
 
 // 停止机器人
 function stopBot() {
-    fetch('/api/stop_bot', { method: 'POST' })
-        .then(response => response.json())
-        .then(data => {
-            showNotification(data.message, data.success ? 'success' : 'error');
-            if (data.success) {
-                fetchBotStatus();
-            }
-        })
-        .catch(error => {
-            console.error('停止机器人失败:', error);
-            showNotification('停止机器人失败，请检查网络连接', 'error');
-        });
+    return runBotCommand('/api/stop_bot', '停止机器人失败');
 }
 
 // 重启机器人
 function restartBot() {
-    fetch('/api/restart_bot', { method: 'POST' })
-        .then(response => response.json())
-        .then(data => {
-            showNotification(data.message, data.success ? 'success' : 'error');
-            if (data.success) {
-                fetchBotStatus();
-            }
-        })
-        .catch(error => {
-            console.error('重启机器人失败:', error);
-            showNotification('重启机器人失败，请检查网络连接', 'error');
-        });
+    return runBotCommand('/api/restart_bot', '重启机器人失败');
 }
 
 // 显示通知
 function showNotification(message, type = 'info') {
-    // 创建通知元素
-    const notification = document.createElement('div');
-    const bgColor = type === 'success' ? 'bg-green-500' :
-                   type === 'error' ? 'bg-red-500' :
-                   type === 'warning' ? 'bg-yellow-500' :
-                   'bg-blue-500';
-    const icon = type === 'success' ? 'fa-check' :
-                type === 'error' ? 'fa-exclamation-triangle' :
-                type === 'warning' ? 'fa-exclamation' :
-                'fa-info';
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    const icons = {
+        success: 'fa-solid fa-circle-check',
+        error: 'fa-solid fa-circle-exclamation',
+        warning: 'fa-solid fa-triangle-exclamation',
+        info: 'fa-solid fa-circle-info'
+    };
+    const kind = icons[type] ? type : 'info';
 
-    notification.className = `fixed top-4 right-4 p-4 rounded-lg shadow-lg z-50 max-w-sm transform transition-transform duration-300 translate-x-full ${bgColor} text-white`;
-    notification.innerHTML = `
-        <div class="flex items-center">
-            <i class="fa ${icon} mr-3"></i>
-            <span class="flex-1">${message}</span>
-            <button onclick="this.parentElement.parentElement.remove()" class="ml-4 text-white hover:text-gray-200">
-                <i class="fa fa-times"></i>
-            </button>
-        </div>
+    toast.className = `toast ${kind}`;
+    toast.setAttribute('role', kind === 'error' ? 'alert' : 'status');
+    toast.innerHTML = `
+        <span class="toast-icon"><i class="${icons[kind]}"></i></span>
+        <span class="toast-body">${message}</span>
+        <button type="button" class="toast-close" aria-label="关闭通知">
+            <i class="fa-solid fa-xmark"></i>
+        </button>
     `;
-    
-    document.body.appendChild(notification);
-    
-    // 显示通知
-    setTimeout(() => {
-        notification.classList.remove('translate-x-full');
-    }, 100);
-    
-    // 5秒后隐藏并移除
-    setTimeout(() => {
-        notification.classList.add('translate-x-full');
-        setTimeout(() => {
-            if (notification.parentNode) {
-                notification.parentNode.removeChild(notification);
-            }
-        }, 300);
-    }, 5000);
+
+    const close = () => {
+        toast.classList.remove('is-visible');
+        setTimeout(() => toast.remove(), 240);
+    };
+    toast.querySelector('.toast-close').addEventListener('click', close);
+
+    (container || document.body).appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add('is-visible'));
+
+    setTimeout(close, 5000);
 }
 
 const adminForm = document.getElementById('admin-form');
@@ -4116,11 +3942,13 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    // 添加用户名显示类
-    const usernameElements = document.querySelectorAll('.username-display');
-    usernameElements.forEach(el => {
-        el.textContent = '{{ session.username }}';
-    });
+    // 用户名显示（由 base.html 的 data-username 提供，静态 JS 无法使用 Jinja）
+    const username = document.body.dataset.username || '';
+    if (username) {
+        document.querySelectorAll('.username-display').forEach(el => {
+            el.textContent = username;
+        });
+    }
 
     setTimeout(checkForUpdates, 2000);
 
