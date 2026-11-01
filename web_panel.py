@@ -2562,4 +2562,4 @@ if __name__ == '__main__':
     print(f"{Fore.GREEN}请及时修改默认密码！")
     
     # 关闭调试模式，避免重启
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=False, host='0.0.0.0', port=5000)
