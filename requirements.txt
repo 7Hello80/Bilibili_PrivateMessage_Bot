@@ -2,7 +2,6 @@ PyGithub
 Flask
 requests
 colorama
-sqlite3
 pathlib
 werkzeug
 psutil
