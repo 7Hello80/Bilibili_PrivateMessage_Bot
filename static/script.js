@@ -6,6 +6,30 @@ let onlinePlugins = [];
 let botRunning = false;           // 机器人进程是否在运行
 let pluginDetailName = null;      // 当前打开详情的插件名
 let pluginDetailData = null;      // 当前插件详情数据缓存
+let pluginSourceLoadedName = null;  // 源码 tab 已加载文件列表的插件名
+let pluginSourceSelectedFile = ''; // 源码 tab 当前选中的文件
+let pluginSourceSnapshot = null;   // 当前文件最近一次加载/保存的内容
+let pluginConfigLoadedName = null;  // 配置 tab 已加载配置的插件名
+let pluginConfigSnapshot = null;    // 最近一次加载/保存的配置 JSON 文本
+
+// 未保存修改检测（用于关闭抽屉前提醒）
+function isPluginSourceDirty() {
+    if (!pluginSourceSelectedFile || pluginSourceSnapshot === null) return false;
+    try {
+        return getEditorValue('plugin-source-editor') !== pluginSourceSnapshot;
+    } catch (e) {
+        return false;
+    }
+}
+
+function isPluginConfigDirty() {
+    if (!pluginConfigLoadedName || pluginConfigSnapshot === null) return false;
+    try {
+        return getEditorValue('plugin-config-editor') !== pluginConfigSnapshot;
+    } catch (e) {
+        return false;
+    }
+}
 
 // 配置marked选项（如果还没有配置的话）
 if (typeof marked !== 'undefined') {
@@ -113,7 +137,7 @@ const SECTION_LABELS = {
 
 // 显示插件商店页面
 function showPluginsSection() {
-    showSection('plugins');
+    showSection('plugins');   // showSection 内部会调用 restoreInstallTasks()
     loadInstalledPlugins();
 }
 
@@ -370,12 +394,228 @@ function getPluginList() {
 }
 
 
-// 安装插件
+// ================= 安装任务(进度 + 日志) =================
+
+// 结构: {taskId: {timer, cursor, el, logs, status}}
+const installTasks = {};
+const dismissedInstallTasks = {};  // 已手动清理、不再从后端恢复的任务 id
+const INSTALL_POLL_INTERVAL = 900;
+let installRefreshTimer = null;
+const INSTALL_STATUS_TEXT = {
+    pending: '排队中',
+    running: '安装中',
+    success: '安装成功',
+    error: '安装失败',
+    canceled: '已取消'
+};
+
+function escapeTaskHtml(text) {
+    return String(text == null ? '' : text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
+function installLogLevelClass(level) {
+    const v = String(level || '').toUpperCase();
+    if (v === 'ERROR') return 'is-error';
+    if (v === 'WARN' || v === 'WARNING') return 'is-warn';
+    return '';
+}
+
+// 创建/更新安装任务卡片，并自动开启或关闭轮询
+function renderInstallTask(task) {
+    const panel = document.getElementById('plugin-install-panel');
+    const list = document.getElementById('plugin-install-tasks');
+    if (!panel || !list || !task || !task.id) return;
+
+    panel.classList.remove('hidden');
+    let entry = installTasks[task.id];
+    if (!entry) {
+        const card = document.createElement('div');
+        card.className = 'install-task';
+        card.id = 'install-task-' + task.id;
+        card.innerHTML = `
+            <div class="install-task-head">
+                <div class="install-task-title">
+                    <i class="fa-solid fa-cube"></i>
+                    <strong class="install-task-name"></strong>
+                    <span class="badge badge-neutral install-task-mirror hidden"></span>
+                </div>
+                <div class="row-wrap" style="align-items:center">
+                    <span class="install-task-status badge badge-neutral">排队中</span>
+                    <button type="button" class="btn btn-ghost btn-sm install-task-cancel">
+                        <i class="fa-solid fa-xmark"></i>取消
+                    </button>
+                </div>
+            </div>
+            <div class="progress-track"><div class="progress-bar install-task-bar" style="width:0%"></div></div>
+            <p class="install-task-stage field-hint">准备中…</p>
+            <pre class="code-panel log-terminal install-task-log" style="max-height:220px"></pre>
+        `;
+        card.querySelector('.install-task-cancel').addEventListener('click', function() {
+            cancelInstallTask(task.id);
+        });
+        list.appendChild(card);
+        entry = installTasks[task.id] = {
+            el: card,
+            cursor: 0,
+            timer: null,
+            logs: [],
+            status: task.status
+        };
+    }
+
+    const el = entry.el;
+    el.querySelector('.install-task-name').textContent = task.plugin_name || task.repo_full_name;
+
+    const mirrorBadge = el.querySelector('.install-task-mirror');
+    if (task.mirror) {
+        mirrorBadge.textContent = task.mirror;
+        mirrorBadge.classList.remove('hidden');
+    } else {
+        mirrorBadge.classList.add('hidden');
+    }
+
+    const statusEl = el.querySelector('.install-task-status');
+    statusEl.textContent = INSTALL_STATUS_TEXT[task.status] || task.status;
+    statusEl.className = 'install-task-status badge ' + ({
+        success: 'badge-success',
+        error: 'badge-danger',
+        canceled: 'badge-neutral',
+        running: 'badge-info'
+    }[task.status] || 'badge-neutral');
+
+    const bar = el.querySelector('.install-task-bar');
+    bar.style.width = Math.max(0, Math.min(100, task.progress || 0)) + '%';
+    bar.classList.toggle('is-error', task.status === 'error');
+
+    el.querySelector('.install-task-stage').textContent =
+        (task.status !== 'running' && task.message) ? task.message : (task.stage || '');
+
+    const cancelBtn = el.querySelector('.install-task-cancel');
+    cancelBtn.classList.toggle('hidden', task.status !== 'pending' && task.status !== 'running');
+
+    // 追加增量日志
+    if (task.logs && task.logs.length) {
+        const logEl = el.querySelector('.install-task-log');
+        entry.logs = entry.logs.concat(task.logs);
+        if (entry.logs.length > 500) entry.logs = entry.logs.slice(-500);
+        logEl.innerHTML = entry.logs.map(line => {
+            const cls = installLogLevelClass(line.level);
+            return `<span class="log-line ${cls}"><span class="log-time">${line.time}</span> ${escapeTaskHtml(line.message)}</span>`;
+        }).join('');
+        logEl.scrollTop = logEl.scrollHeight;
+    }
+    if (task.log_cursor) entry.cursor = task.log_cursor;
+
+    entry.status = task.status;
+    if (['success', 'error', 'canceled'].indexOf(task.status) >= 0) {
+        stopInstallPolling(task.id);
+        if (task.status === 'success') scheduleInstallRefresh();
+    } else {
+        startInstallPolling(task.id);
+    }
+}
+
+function restoreInstallTasks() {
+    fetch('/api/plugins/installs')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success || !Array.isArray(data.tasks)) return;
+            // 接口返回新→旧；按旧→新渲染，保证卡片顺序与创建时间一致
+            data.tasks.slice().reverse().forEach(function(task) {
+                if (!task || !task.id) return;
+                if (installTasks[task.id]) return;       // 本页已在跟踪，避免重复日志
+                if (dismissedInstallTasks[task.id]) return;  // 用户已清理，不再恢复
+                renderInstallTask(task);
+            });
+        })
+        .catch(err => console.error('恢复安装任务失败:', err));
+}
+
+function startInstallPolling(taskId) {
+    const entry = installTasks[taskId];
+    if (!entry || entry.timer) return;
+    entry.timer = setInterval(function() { pollInstallTask(taskId); }, INSTALL_POLL_INTERVAL);
+}
+
+function stopInstallPolling(taskId) {
+    const entry = installTasks[taskId];
+    if (!entry) return;
+    if (entry.timer) {
+        clearInterval(entry.timer);
+        entry.timer = null;
+    }
+}
+
+function pollInstallTask(taskId) {
+    const entry = installTasks[taskId];
+    if (!entry) return;
+    const since = entry.cursor || 0;
+    fetch('/api/plugins/install/' + encodeURIComponent(taskId) + '?after=' + since)
+        .then(r => r.json())
+        .then(data => {
+            if (!data.success) {
+                if (data.message && data.message.indexOf('过期') >= 0) stopInstallPolling(taskId);
+                return;
+            }
+            renderInstallTask(data.task);
+        })
+        .catch(err => console.error('查询安装任务失败:', err));
+}
+
+function cancelInstallTask(taskId) {
+    layer.confirm('确定要取消该安装任务吗？', {
+        icon: 3,
+        title: '取消安装'
+    }, function(index) {
+        layer.close(index);
+        fetch('/api/plugins/install/' + encodeURIComponent(taskId) + '/cancel', { method: 'POST' })
+            .then(r => r.json())
+            .then(data => {
+                showNotification(data.message, data.success ? 'warning' : 'error');
+            })
+            .catch(function() { showNotification('取消安装失败', 'error'); });
+    });
+}
+
+function scheduleInstallRefresh() {
+    if (installRefreshTimer) clearTimeout(installRefreshTimer);
+    installRefreshTimer = setTimeout(function() {
+        installRefreshTimer = null;
+        loadInstalledPlugins();
+        if (currentPluginSearchKeyword) searchPlugins();
+    }, 800);
+}
+
+function clearFinishedInstallTasks() {
+    let removed = 0;
+    Object.keys(installTasks).forEach(function(id) {
+        const entry = installTasks[id];
+        if (!entry) return;
+        if (['success', 'error', 'canceled'].indexOf(entry.status) >= 0) {
+            stopInstallPolling(id);
+            if (entry.el && entry.el.parentNode) entry.el.parentNode.removeChild(entry.el);
+            dismissedInstallTasks[id] = true;
+            delete installTasks[id];
+            removed++;
+        }
+    });
+    const list = document.getElementById('plugin-install-tasks');
+    const panel = document.getElementById('plugin-install-panel');
+    if (list && panel && !list.children.length) panel.classList.add('hidden');
+    showNotification(removed ? '已清理 ' + removed + ' 个已结束任务' : '没有可清理的任务', 'info');
+}
+
+// 安装插件：创建后台任务后轮询进度
 function installPlugin(repoFullName, pluginName) {
     layer.confirm(`确定要安装插件 "${pluginName}" 吗？<br><span style="color:#dc2626;font-size:12px;">⚠ 插件以代码形式运行且与机器人同进程，请只安装可信来源的插件</span>`, {
         icon: 3,
         title: '确认安装'
     }, function(index) {
+        layer.close(index);
         fetch('/api/plugins/install', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -386,20 +626,22 @@ function installPlugin(repoFullName, pluginName) {
         })
         .then(response => response.json())
         .then(data => {
-            showNotification(data.message, data.success ? (data.bot_not_running ? 'warning' : 'success') : 'error');
-            if (data.success) {
-                loadInstalledPlugins();
-                // 重新搜索以更新安装状态
-                if (currentPluginSearchKeyword) {
-                    searchPlugins();
+            if (data.success && data.task) {
+                renderInstallTask(data.task);
+                startInstallPolling(data.task.id);
+                const panel = document.getElementById('plugin-install-panel');
+                if (panel && panel.scrollIntoView) {
+                    panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 }
+                showNotification('安装任务已开始，进度与日志见"安装任务"卡片', 'info');
+            } else {
+                showNotification(data.message || '创建安装任务失败', 'error');
             }
         })
         .catch(error => {
             console.error('安装插件失败:', error);
             showNotification('安装插件失败', 'error');
         });
-        layer.close(index);
     });
 }
 
@@ -494,11 +736,29 @@ function hideCreatePluginModal() {
 
 // ================= 插件详情 =================
 
+// 抽屉开关：同步 hidden / aria-hidden，并锁定页面滚动
+function setPluginDetailDrawerOpen(open) {
+    const modal = document.getElementById('plugin-detail-modal');
+    if (!modal) return;
+    modal.classList.toggle('hidden', !open);
+    modal.setAttribute('aria-hidden', open ? 'false' : 'true');
+    document.body.classList.toggle('drawer-open', open);
+    if (open) {
+        const closeBtn = modal.querySelector('.drawer-close');
+        if (closeBtn) setTimeout(function() { closeBtn.focus(); }, 40);
+    }
+}
+
 // 打开插件详情模态框
 function openPluginDetail(name) {
     pluginDetailName = name;
     pluginDetailData = null;
-    document.getElementById('plugin-detail-modal').classList.remove('hidden');
+    pluginSourceLoadedName = null;
+    pluginSourceSelectedFile = '';
+    pluginConfigLoadedName = null;
+    pluginConfigSnapshot = null;
+    pluginSourceSnapshot = null;
+    setPluginDetailDrawerOpen(true);
     document.getElementById('plugin-detail-title').textContent = name;
     document.getElementById('plugin-detail-version').textContent = '加载中...';
     document.getElementById('plugin-detail-status-badge').textContent = '';
@@ -613,8 +873,32 @@ function renderPluginDetailInfo(data) {
 }
 
 function hidePluginDetailModal() {
-    document.getElementById('plugin-detail-modal').classList.add('hidden');
+    if (isPluginSourceDirty() || isPluginConfigDirty()) {
+        layer.confirm('源码或配置有未保存的修改，关闭后将丢弃，确定关闭吗？', {
+            icon: 3,
+            title: '未保存的修改'
+        }, function(index) {
+            layer.close(index);
+            setPluginDetailDrawerOpen(false);
+        });
+        return;
+    }
+    setPluginDetailDrawerOpen(false);
 }
+
+// ESC 关闭抽屉 / 加速源弹窗
+document.addEventListener('keydown', function(e) {
+    if (e.key !== 'Escape') return;
+    const sourceModal = document.getElementById('github-source-modal');
+    if (sourceModal && !sourceModal.classList.contains('hidden')) {
+        hideGithubSourceModal();
+        return;
+    }
+    const drawer = document.getElementById('plugin-detail-modal');
+    if (drawer && !drawer.classList.contains('hidden')) {
+        hidePluginDetailModal();
+    }
+});
 
 // 详情页快捷启用/禁用
 function togglePluginFromDetail() {
@@ -691,13 +975,19 @@ function switchPluginTab(tab) {
     document.querySelectorAll('.plugin-detail-content').forEach(el => el.classList.add('hidden'));
     const target = document.getElementById('plugin-tab-' + tab);
     if (target) target.classList.remove('hidden');
+    if (tab === 'config') refreshEditor('plugin-config-editor');
+    if (tab === 'source') refreshEditor('plugin-source-editor');
 
     if (!pluginDetailName) return;
     if (tab === 'readme' && pluginDetailData) {
         document.getElementById('plugin-detail-readme').textContent =
             pluginDetailData.readme || '暂无 README 内容';
     } else if (tab === 'config') {
-        loadPluginConfigTab(pluginDetailName);
+        if (pluginConfigLoadedName === pluginDetailName) {
+            refreshEditor('plugin-config-editor');
+        } else {
+            loadPluginConfigTab(pluginDetailName);
+        }
     } else if (tab === 'logs') {
         loadPluginLogs(pluginDetailName);
     } else if (tab === 'metrics') {
@@ -711,7 +1001,12 @@ function switchPluginTab(tab) {
             }
         }
     } else if (tab === 'source') {
-        loadPluginSourceFile(pluginDetailName);
+        // 同一插件已加载过文件列表时不再重新拉取，避免丢弃未保存的编辑
+        if (pluginSourceLoadedName === pluginDetailName) {
+            refreshEditor('plugin-source-editor');
+        } else {
+            loadPluginSourceFile(pluginDetailName);
+        }
     }
 }
 
@@ -722,8 +1017,12 @@ function loadPluginConfigTab(name) {
         .then(response => response.json())
         .then(data => {
             if (data.success) {
-                document.getElementById('plugin-config-editor').value =
-                    JSON.stringify(data.config, null, 2);
+                const raw = JSON.stringify(data.config, null, 2);
+                setEditorValue('plugin-config-editor', raw,
+                    { name: 'javascript', json: true });
+                pluginConfigLoadedName = name;
+                pluginConfigSnapshot = getEditorValue('plugin-config-editor');
+                refreshEditor('plugin-config-editor');
                 document.getElementById('plugin-config-error').classList.add('hidden');
             } else {
                 showNotification(data.message || '加载配置失败', 'error');
@@ -737,7 +1036,7 @@ function loadPluginConfigTab(name) {
 
 function savePluginConfig() {
     if (!pluginDetailName) return;
-    const raw = document.getElementById('plugin-config-editor').value;
+    const raw = getEditorValue('plugin-config-editor');
     let config;
     try {
         config = JSON.parse(raw);
@@ -758,6 +1057,10 @@ function savePluginConfig() {
     .then(data => {
         showNotification(data.message, data.success
             ? (data.bot_not_running ? 'warning' : 'success') : 'error');
+        if (data.success) {
+            pluginConfigLoadedName = pluginDetailName;
+            pluginConfigSnapshot = raw;
+        }
     })
     .catch(error => {
         console.error('保存配置失败:', error);
@@ -975,6 +1278,316 @@ function reloadAllPlugins() {
 
 // ================= 源码编辑 =================
 
+// ================= 代码编辑器（CodeMirror，加载失败时回退 textarea） =================
+
+const cmEditors = {};        // textareaId -> CodeMirror 实例
+const CM_MODE_BY_EXT = {
+    py: 'python', pyw: 'python',
+    js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript',
+    ts: 'javascript', json: { name: 'javascript', json: true },
+    html: 'htmlmixed', htm: 'htmlmixed', xml: 'xml', svg: 'xml',
+    css: 'css', scss: 'css', less: 'css',
+    md: 'markdown', markdown: 'markdown',
+    yml: 'yaml', yaml: 'yaml',
+    sh: 'shell', bash: 'shell', zsh: 'shell',
+    sql: 'sql'
+};
+
+function cmModeForFilename(fname) {
+    if (!fname) return null;
+    const ext = String(fname).split('.').pop().toLowerCase();
+    return Object.prototype.hasOwnProperty.call(CM_MODE_BY_EXT, ext)
+        ? CM_MODE_BY_EXT[ext] : null;
+}
+
+function cmHostFor(textareaId) {
+    return document.querySelector('.cm-host[data-cm-target="' + textareaId + '"]');
+}
+
+// 懒初始化：只有真正用到编辑器且 CodeMirror 已加载时才创建
+function ensureCodeMirror(textareaId, mode) {
+    const textarea = document.getElementById(textareaId);
+    if (!textarea) return null;
+    let editor = cmEditors[textareaId];
+    if (editor) {
+        if (mode !== undefined) editor.setOption('mode', mode);
+        editor.setOption('readOnly', !!textarea.readOnly);
+        return editor;
+    }
+    if (typeof window.CodeMirror === 'undefined') return null;
+    editor = window.CodeMirror.fromTextArea(textarea, {
+        mode: mode === undefined ? null : mode,
+        lineNumbers: true,
+        lineWrapping: false,
+        matchBrackets: true,
+        autoCloseBrackets: true,
+        styleActiveLine: true,
+        indentUnit: 4,
+        tabSize: 4,
+        indentWithTabs: false,
+        viewportMargin: 12,
+        readOnly: !!textarea.readOnly
+    });
+    cmEditors[textareaId] = editor;
+    const host = cmHostFor(textareaId);
+    if (host && editor.getWrapperElement().parentNode !== host) {
+        host.appendChild(editor.getWrapperElement());
+        host.classList.add('is-ready');
+    }
+    textarea.classList.add('hidden');
+    editor.on('change', function() {
+        textarea.value = editor.getValue();
+    });
+    return editor;
+}
+
+function setEditorValue(textareaId, value, mode) {
+    const text = value == null ? '' : String(value);
+    const editor = ensureCodeMirror(textareaId, mode);
+    if (editor) {
+        if (mode !== undefined) editor.setOption('mode', mode);
+        if (editor.getValue() !== text) editor.setValue(text);
+        return;
+    }
+    const textarea = document.getElementById(textareaId);
+    if (textarea) textarea.value = text;
+}
+
+function getEditorValue(textareaId) {
+    const editor = cmEditors[textareaId];
+    if (editor) return editor.getValue();
+    const textarea = document.getElementById(textareaId);
+    return textarea ? textarea.value : '';
+}
+
+// 抽屉/标签从 hidden 变为可见后需要重算尺寸，否则编辑器只显示一条线
+function refreshEditor(textareaId) {
+    const editor = cmEditors[textareaId];
+    if (editor) setTimeout(function() { editor.refresh(); }, 30);
+}
+
+// ================= GitHub 加速源 =================
+
+let githubSourceState = null;
+
+function showGithubSourceModal() {
+    const modal = document.getElementById('github-source-modal');
+    if (!modal) return;
+    modal.classList.remove('hidden');
+    loadGithubSourceSettings();
+}
+
+function hideGithubSourceModal() {
+    const modal = document.getElementById('github-source-modal');
+    if (modal) modal.classList.add('hidden');
+}
+
+function loadGithubSourceSettings() {
+    fetch('/api/github/source')
+        .then(function(response) { return response.json(); })
+        .then(function(data) {
+            if (!data.success) {
+                showNotification(data.message || '读取加速源设置失败', 'error');
+                return;
+            }
+            githubSourceState = data;
+            renderGithubSourceSettings(data);
+        })
+        .catch(function(error) {
+            console.error('读取加速源设置失败:', error);
+            showNotification('读取加速源设置失败', 'error');
+        });
+}
+
+function currentGithubSourceMode() {
+    const el = document.querySelector('input[name="github-source-mode"]:checked');
+    return el && el.value === 'manual' ? 'manual' : 'auto';
+}
+
+function renderGithubSourceSettings(data) {
+    const settings = data.settings || {};
+    const autoEl = document.getElementById('github-source-mode-auto');
+    const manualEl = document.getElementById('github-source-mode-manual');
+    if (autoEl) autoEl.checked = settings.mode !== 'manual';
+    if (manualEl) manualEl.checked = settings.mode === 'manual';
+    renderGithubSourceOptions(data);
+    const customInput = document.getElementById('github-source-custom');
+    if (customInput) customInput.value = settings.custom_prefix || '';
+    syncGithubSourceMode();
+    renderGithubSourceHealth(data);
+}
+
+function renderGithubSourceOptions(data) {
+    const select = document.getElementById('github-source-mirror');
+    if (!select) return;
+    const mirrors = data.mirrors || [];
+    const current = (data.settings || {}).mirror || 'official';
+    const options = mirrors.map(function(mirror) {
+        const caps = [];
+        if (mirror.supports_zip) caps.push('压缩包');
+        if (mirror.supports_api) caps.push('API');
+        const suffix = caps.length ? '（' + caps.join('/') + '）' : '（不支持安装）';
+        return '<option value="' + escapeTaskHtml(mirror.id) + '">'
+            + escapeTaskHtml(mirror.name) + suffix + '</option>';
+    });
+    options.push('<option value="custom">自定义前缀</option>');
+    select.innerHTML = options.join('');
+    select.value = current;
+    if (select.value !== current) select.value = 'official';
+    updateGithubSourceCustom();
+}
+
+// 自动模式下不使用手动源，禁用相关控件避免误解
+function syncGithubSourceMode() {
+    const manual = currentGithubSourceMode() === 'manual';
+    const select = document.getElementById('github-source-mirror');
+    const customInput = document.getElementById('github-source-custom');
+    if (select) select.disabled = !manual;
+    if (customInput) customInput.disabled = !manual;
+    updateGithubSourceCustom();
+}
+
+function updateGithubSourceCustom() {
+    const select = document.getElementById('github-source-mirror');
+    const wrap = document.getElementById('github-source-custom-wrap');
+    const customInput = document.getElementById('github-source-custom');
+    const note = document.getElementById('github-source-mirror-note');
+    if (!select || !wrap) return;
+    const manual = currentGithubSourceMode() === 'manual';
+    const isCustom = manual && select.value === 'custom';
+    wrap.classList.toggle('hidden', !isCustom);
+    if (isCustom && customInput && !customInput.value && githubSourceState) {
+        customInput.value = (githubSourceState.settings || {}).custom_prefix || '';
+    }
+    if (note) {
+        if (!manual) {
+            note.textContent = '自动模式：官方优先，连接超时或长时间无响应时按健康度切换到加速镜像';
+        } else {
+            const mirror = ((githubSourceState || {}).mirrors || []).find(function(item) {
+                return item.id === select.value;
+            });
+            note.textContent = mirror
+                ? (mirror.note || '')
+                : '请求时把该前缀拼在原始 GitHub 地址之前';
+        }
+    }
+}
+
+function renderGithubSourceHealth(data, probeResults) {
+    const body = document.getElementById('github-source-health-body');
+    if (!body) return;
+    const mirrors = (data && data.mirrors) || [];
+    if (!mirrors.length) {
+        body.innerHTML = '<tr><td colspan="4" class="field-hint">没有可用的加速源</td></tr>';
+        return;
+    }
+    const results = {};
+    (probeResults || []).forEach(function(item) { results[item.id] = item; });
+    body.innerHTML = mirrors.map(function(mirror) {
+        const health = mirror.health || {};
+        const probe = results[mirror.id];
+        let latency = '—';
+        if (probe && probe.ok && probe.latency != null) {
+            latency = Math.round(probe.latency * 1000) + ' ms';
+        } else if (!probe && health.latency) {
+            latency = Math.round(health.latency * 1000) + ' ms';
+        }
+        let status = '<span class="badge badge-neutral">未测试</span>';
+        if (probe) {
+            status = probe.ok
+                ? '<span class="badge badge-success">可用</span>'
+                : '<span class="badge badge-danger" title="' + escapeTaskHtml(probe.error) + '">失败</span>';
+        } else if (health.ok) {
+            status = '<span class="badge badge-success">可用</span>';
+        } else if (health.fails_in_row) {
+            status = '<span class="badge badge-warning">失败 ' + health.fails_in_row + ' 次</span>';
+        }
+        const caps = [];
+        if (mirror.supports_zip) caps.push('压缩包');
+        if (mirror.supports_api) caps.push('API');
+        const note = escapeTaskHtml(mirror.note || '')
+            + (caps.length ? '（支持：' + caps.join(' / ') + '）' : '');
+        return '<tr><td>' + escapeTaskHtml(mirror.name) + '</td><td>' + latency + '</td>'
+            + '<td>' + status + '</td><td class="field-hint">' + note + '</td></tr>';
+    }).join('');
+}
+
+function probeGithubSources() {
+    const statusEl = document.getElementById('github-source-probe-status');
+    if (statusEl) statusEl.textContent = '正在测速…';
+    fetch('/api/github/source/probe', { method: 'POST' })
+        .then(function(response) { return response.json(); })
+        .then(function(data) {
+            if (!data.success) {
+                if (statusEl) statusEl.textContent = data.message || '测速失败';
+                showNotification(data.message || '测速失败', 'error');
+                return;
+            }
+            if (statusEl) statusEl.textContent = '测速完成';
+            const results = data.results || [];
+            const okCount = results.filter(function(item) { return item.ok; }).length;
+            showNotification('测速完成：' + okCount + '/' + results.length + ' 个源可用',
+                okCount ? 'success' : 'warning');
+            // 重新拉取状态以带上最新健康度
+            fetch('/api/github/source')
+                .then(function(response) { return response.json(); })
+                .then(function(fresh) {
+                    if (!fresh.success) return;
+                    githubSourceState = fresh;
+                    renderGithubSourceSettings(fresh);
+                    renderGithubSourceHealth(fresh, results);
+                });
+        })
+        .catch(function(error) {
+            console.error('测速失败:', error);
+            if (statusEl) statusEl.textContent = '测速失败';
+            showNotification('测速失败', 'error');
+        });
+}
+
+function saveGithubSource() {
+    const mode = currentGithubSourceMode();
+    const select = document.getElementById('github-source-mirror');
+    const customInput = document.getElementById('github-source-custom');
+    const mirror = (select && select.value) || 'official';
+    const customPrefix = customInput ? customInput.value.trim() : '';
+    if (mode === 'manual' && mirror === 'custom' && !customPrefix) {
+        showNotification('请填写自定义前缀（需以 http:// 或 https:// 开头）', 'error');
+        return;
+    }
+    const payload = { mode: mode };
+    if (mode === 'manual') payload.mirror = mirror;
+    if (customPrefix) payload.custom_prefix = customPrefix;
+
+    fetch('/api/github/source', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+    })
+    .then(function(response) { return response.json(); })
+    .then(function(data) {
+        if (!data.success) {
+            showNotification(data.message || '保存失败', 'error');
+            return;
+        }
+        githubSourceState = data;
+        renderGithubSourceSettings(data);
+        showNotification(data.message || '加速源设置已保存', 'success');
+    })
+    .catch(function(error) {
+        console.error('保存加速源设置失败:', error);
+        showNotification('保存加速源设置失败', 'error');
+    });
+}
+
+function initGithubSourceInteractions() {
+    document.querySelectorAll('input[name="github-source-mode"]').forEach(function(el) {
+        el.addEventListener('change', syncGithubSourceMode);
+    });
+}
+
+document.addEventListener('DOMContentLoaded', initGithubSourceInteractions);
+
 // 插件目录下可编辑文件缓存: {相对路径: 内容}
 let pluginSourceFiles = {};
 
@@ -989,14 +1602,17 @@ function loadPluginSourceFile(name) {
                 return;
             }
             pluginSourceFiles = data.files || {};
+            pluginSourceLoadedName = name;
             const select = document.getElementById('plugin-source-file');
             const names = Object.keys(pluginSourceFiles).sort();
             if (names.length) {
                 select.innerHTML = names.map(f =>
                     `<option value="${f}">${f}</option>`).join('');
-                // 默认选中 main.py
+                // 默认选中 main.py；没有则保留之前的选择
                 if (names.indexOf('main.py') >= 0) {
                     select.value = 'main.py';
+                } else if (names.indexOf(pluginSourceSelectedFile) >= 0) {
+                    select.value = pluginSourceSelectedFile;
                 }
             } else {
                 select.innerHTML = '<option value="">(无可编辑文件)</option>';
@@ -1013,15 +1629,37 @@ function loadPluginSourceFile(name) {
         });
 }
 
-// 切换下拉框文件时更新编辑器内容
-function updateSourceEditor() {
+// 切换下拉框文件时更新编辑器内容（CodeMirror 不可用时回退到 textarea）
+function updateSourceEditor(force) {
     const select = document.getElementById('plugin-source-file');
-    const editor = document.getElementById('plugin-source-editor');
-    if (!select || !editor) return;
+    const textarea = document.getElementById('plugin-source-editor');
+    if (!select || !textarea) return;
     const fname = select.value;
-    editor.value = (fname && pluginSourceFiles[fname] !== undefined)
+
+    // 切换文件前检查未保存修改，取消则回退下拉选择
+    if (!force && pluginSourceSelectedFile && fname !== pluginSourceSelectedFile
+            && isPluginSourceDirty()) {
+        const previous = pluginSourceSelectedFile;
+        layer.confirm('当前文件有未保存的修改，切换后将丢弃，确定切换吗？', {
+            icon: 3,
+            title: '未保存的修改'
+        }, function(index) {
+            layer.close(index);
+            updateSourceEditor(true);
+        }, function() {
+            select.value = previous;
+        });
+        return;
+    }
+
+    const content = (fname && pluginSourceFiles[fname] !== undefined)
         ? pluginSourceFiles[fname] : '';
-    editor.readOnly = !fname;
+    const mode = fname ? cmModeForFilename(fname) : null;
+    textarea.readOnly = !fname;
+    setEditorValue('plugin-source-editor', content, mode);
+    refreshEditor('plugin-source-editor');
+    pluginSourceSelectedFile = fname || '';
+    pluginSourceSnapshot = getEditorValue('plugin-source-editor');
     const errEl = document.getElementById('plugin-source-error');
     if (errEl) errEl.classList.add('hidden');
 }
@@ -1034,7 +1672,7 @@ function savePluginSource() {
         showNotification('没有可编辑的文件', 'error');
         return;
     }
-    const content = document.getElementById('plugin-source-editor').value;
+    const content = getEditorValue('plugin-source-editor');
 
     fetch('/api/plugins/edit/' + encodeURIComponent(pluginDetailName), {
         method: 'POST',
@@ -1045,6 +1683,8 @@ function savePluginSource() {
     .then(data => {
         if (data.success) {
             pluginSourceFiles[fname] = content;  // 更新本地缓存
+            pluginSourceSnapshot = content;
+            pluginSourceSelectedFile = fname;
             document.getElementById('plugin-source-error').classList.add('hidden');
             showNotification(data.message, 'success');
             loadInstalledPlugins();
@@ -1144,6 +1784,11 @@ function showSection(sectionId) {
         startLogPolling();
     } else {
         stopLogPolling();
+    }
+
+    // 插件商店：恢复后台仍在进行/刚结束的安装任务卡片
+    if (sectionId === 'plugins') {
+        restoreInstallTasks();
     }
 
     // 在移动端选择后关闭抽屉
@@ -3682,17 +4327,78 @@ function initNetworkChart() {
     });
 }
 
+// 指标不可用时的占位文案（Android/Termux 限制 /proc 读取时后端返回 null）
+const STAT_UNAVAILABLE = '不可用';
+const STAT_UNAVAILABLE_TIP = '当前设备限制了系统接口读取权限，该指标暂不可用';
+
+// 把后端数值归一化：null/undefined/非数字统一返回 null
+function statValue(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const num = Number(value);
+    return Number.isFinite(num) ? num : null;
+}
+
+// 将环形仪表置为“不可用”：隐藏进度弧线并显示破折号
+function setGaugeUnavailable(progressId, usageId) {
+    const circle = document.getElementById(progressId);
+    if (circle) {
+        const dash = Number(circle.getAttribute('stroke-dasharray')) || 283;
+        circle.style.strokeDashoffset = dash;
+    }
+    const label = document.getElementById(usageId);
+    if (label) {
+        label.textContent = '—';
+        label.title = STAT_UNAVAILABLE_TIP;
+    }
+}
+
+// 写入统计文本：不可用时统一显示“不可用”，避免把 null 渲染成 0
+function setStatText(elementId, text, available) {
+    const el = document.getElementById(elementId);
+    if (!el) return;
+    el.textContent = available ? text : STAT_UNAVAILABLE;
+    if (available) {
+        el.removeAttribute('title');
+        el.classList.remove('stat-unavailable');
+    } else {
+        el.title = STAT_UNAVAILABLE_TIP;
+        el.classList.add('stat-unavailable');
+    }
+}
+
 // 更新网络IO数据
 function updateNetworkData(stats) {
     if (!stats.network) return;
     
     const network = stats.network;
+    const sentSpeed = statValue(network.sent_speed);
+    const recvSpeed = statValue(network.recv_speed);
+    const sentTotal = statValue(network.bytes_sent);
+    const recvTotal = statValue(network.bytes_recv);
+    const errorsIn = statValue(network.errors_in);
+    const errorsOut = statValue(network.errors_out);
+    const dropsIn = statValue(network.drops_in);
+    const dropsOut = statValue(network.drops_out);
+    // 网络接口不可读时（如 Android/Termux 无 /proc/net/dev 权限）不写入假数据
+    const available = network.available !== false
+        && sentSpeed !== null && recvSpeed !== null
+        && sentTotal !== null && recvTotal !== null;
+
+    if (!available) {
+        ['net-sent-speed', 'net-recv-speed', 'net-sent-total',
+         'net-recv-total', 'net-errors', 'net-drops']
+            .forEach(id => setStatText(id, '', false));
+        const canvas = document.getElementById('network-speed-chart');
+        if (canvas) canvas.title = STAT_UNAVAILABLE_TIP;
+        return;
+    }
+    
     const now = new Date().toLocaleTimeString();
     
     // 添加新数据点
     networkData.labels.push(now);
-    networkData.sent.push(network.sent_speed);
-    networkData.recv.push(network.recv_speed);
+    networkData.sent.push(sentSpeed);
+    networkData.recv.push(recvSpeed);
     
     // 限制数据点数量
     if (networkData.labels.length > MAX_DATA_POINTS) {
@@ -3702,12 +4408,12 @@ function updateNetworkData(stats) {
     }
     
     // 更新统计信息
-    document.getElementById('net-sent-speed').textContent = `${network.sent_speed} KB/s`;
-    document.getElementById('net-recv-speed').textContent = `${network.recv_speed} KB/s`;
-    document.getElementById('net-sent-total').textContent = `${network.bytes_sent} MB`;
-    document.getElementById('net-recv-total').textContent = `${network.bytes_recv} MB`;
-    document.getElementById('net-errors').textContent = network.errors_in + network.errors_out;
-    document.getElementById('net-drops').textContent = network.drops_in + network.drops_out;
+    setStatText('net-sent-speed', `${sentSpeed} KB/s`, true);
+    setStatText('net-recv-speed', `${recvSpeed} KB/s`, true);
+    setStatText('net-sent-total', `${sentTotal} MB`, true);
+    setStatText('net-recv-total', `${recvTotal} MB`, true);
+    setStatText('net-errors', String((errorsIn ?? 0) + (errorsOut ?? 0)), true);
+    setStatText('net-drops', String((dropsIn ?? 0) + (dropsOut ?? 0)), true);
     
     // 更新图表
     if (networkChart) {
@@ -3724,29 +4430,51 @@ function updateSystemStats() {
                 const cpu = stats.cpu || {};
                 const memory = stats.memory || {};
                 const disk = stats.disk || {};
-                const cpuUsage = Number(cpu.usage ?? 0);
-                const memUsage = Number(memory.usage ?? 0);
-                const diskUsage = Number(disk.usage ?? 0);
+                const cpuUsage = statValue(cpu.usage);
+                const memUsage = statValue(memory.usage);
+                const diskUsage = statValue(disk.usage);
 
                 // 更新CPU信息
-                updateProgressCircle('cpu-progress', cpuUsage);
-                document.getElementById('cpu-usage').textContent = `${cpuUsage}%`;
+                if (cpuUsage === null) {
+                    setGaugeUnavailable('cpu-progress', 'cpu-usage');
+                } else {
+                    updateProgressCircle('cpu-progress', cpuUsage);
+                    const cpuLabel = document.getElementById('cpu-usage');
+                    if (cpuLabel) {
+                        cpuLabel.textContent = `${cpuUsage}%`;
+                        if (cpu.usage_source === 'loadavg') {
+                            cpuLabel.title = '当前平台无法直接读取 CPU 占用，数值由系统负载估算';
+                        } else {
+                            cpuLabel.removeAttribute('title');
+                        }
+                    }
+                }
                 const physicalCores = cpu.physical_cores ?? cpu.logical_cores ?? '-';
                 const logicalCores = cpu.logical_cores ?? cpu.physical_cores ?? '-';
                 document.getElementById('cpu-cores').textContent =
                     `${physicalCores}物理 / ${logicalCores}逻辑`;
 
                 // 更新内存信息
-                updateProgressCircle('mem-progress', memUsage);
-                document.getElementById('mem-usage').textContent = `${memUsage}%`;
-                document.getElementById('mem-details').textContent =
-                    `${Number(memory.used ?? 0)}/${Number(memory.total ?? 0)} GB`;
+                if (memUsage === null) {
+                    setGaugeUnavailable('mem-progress', 'mem-usage');
+                    setStatText('mem-details', '', false);
+                } else {
+                    updateProgressCircle('mem-progress', memUsage);
+                    document.getElementById('mem-usage').textContent = `${memUsage}%`;
+                    setStatText('mem-details',
+                        `${statValue(memory.used) ?? 0}/${statValue(memory.total) ?? 0} GB`, true);
+                }
 
                 // 更新磁盘信息
-                updateProgressCircle('disk-progress', diskUsage);
-                document.getElementById('disk-usage').textContent = `${diskUsage}%`;
-                document.getElementById('disk-details').textContent =
-                    `${Number(disk.used ?? 0)}/${Number(disk.total ?? 0)} GB`;
+                if (diskUsage === null) {
+                    setGaugeUnavailable('disk-progress', 'disk-usage');
+                    setStatText('disk-details', '', false);
+                } else {
+                    updateProgressCircle('disk-progress', diskUsage);
+                    document.getElementById('disk-usage').textContent = `${diskUsage}%`;
+                    setStatText('disk-details',
+                        `${statValue(disk.used) ?? 0}/${statValue(disk.total) ?? 0} GB`, true);
+                }
 
                 // 更新系统负载 (仅Unix系统)
                 const loadContainer = document.getElementById('load-average-container');

@@ -572,7 +572,10 @@
                         <button type="button" class="btn btn-warning" onclick="reloadAllPlugins()">
                             <i class="fa-solid fa-rotate"></i>全部重载
                         </button>
-                        <button type="button" class="btn btn-primary" onclick="loadInstalledPlugins(); getPluginList()">
+                        <button type="button" class="btn btn-secondary" onclick="showGithubSourceModal()">
+                            <i class="fa-solid fa-network-wired"></i>加速源
+                        </button>
+                        <button type="button" class="btn btn-primary" onclick="loadInstalledPlugins(); getPluginList(); restoreInstallTasks()">
                             <i class="fa-solid fa-arrows-rotate"></i>刷新
                         </button>
                     </div>
@@ -585,6 +588,20 @@
                             <input type="text" id="plugin-search" class="input" placeholder="搜索插件…" aria-label="搜索插件">
                         </div>
                     </div>
+                </div>
+
+                <!-- 安装任务：进度条 + 实时日志 -->
+                <div class="card hidden" id="plugin-install-panel">
+                    <div class="card-head">
+                        <div>
+                            <h3 class="card-title"><i class="fa-solid fa-cloud-arrow-down"></i>安装任务</h3>
+                            <p class="card-sub">实时显示下载进度、使用的加速源与日志</p>
+                        </div>
+                        <button type="button" class="btn btn-ghost btn-sm" onclick="clearFinishedInstallTasks()">
+                            <i class="fa-solid fa-broom"></i>清理已结束
+                        </button>
+                    </div>
+                    <div class="card-body stack" id="plugin-install-tasks" style="gap:14px"></div>
                 </div>
 
                 <div class="card">
@@ -1278,133 +1295,214 @@
     </div>
 </div>
 
-<!-- 插件详情 -->
-<div id="plugin-detail-modal" class="modal-mask hidden" role="dialog" aria-modal="true" aria-labelledby="plugin-detail-title">
-    <div class="modal-wrap">
-        <div class="modal-card modal-xl" style="max-width:1100px">
-            <div class="modal-head" style="flex-direction:column;align-items:stretch;gap:12px">
-                <div class="row-between" style="align-items:flex-start;gap:12px;flex-wrap:wrap">
-                    <div class="row-wrap" style="min-width:0">
-                        <h3 id="plugin-detail-title" style="word-break:break-all">插件详情</h3>
-                        <span id="plugin-detail-version" class="badge badge-info"></span>
-                        <span id="plugin-detail-status-badge" class="badge badge-neutral"></span>
-                        <span id="plugin-detail-update-badge" class="badge badge-danger hidden">有新版本</span>
-                    </div>
-                    <div class="row-wrap">
-                        <button type="button" id="plugin-detail-toggle-btn" class="btn btn-warning btn-sm" onclick="togglePluginFromDetail()">禁用</button>
-                        <button type="button" class="btn btn-primary btn-sm" onclick="reloadPlugin(pluginDetailName)">
-                            <i class="fa-solid fa-rotate"></i>重载
-                        </button>
-                        <button type="button" class="btn btn-secondary btn-sm" onclick="backupPlugin(pluginDetailName)">
-                            <i class="fa-solid fa-hard-drive"></i>备份
-                        </button>
-                        <button type="button" class="btn btn-secondary btn-sm" onclick="checkPluginUpdate(pluginDetailName)">
-                            <i class="fa-solid fa-cloud-arrow-down"></i>检查更新
-                        </button>
-                        <button type="button" class="modal-close" onclick="hidePluginDetailModal()" aria-label="关闭">
-                            <i class="fa-solid fa-xmark"></i>
-                        </button>
-                    </div>
+<!-- 插件详情（右侧抽屉） -->
+<div id="plugin-detail-modal" class="drawer-mask hidden" role="dialog" aria-modal="true" aria-hidden="true" aria-labelledby="plugin-detail-title">
+    <div class="drawer-backdrop" onclick="hidePluginDetailModal()"></div>
+    <aside class="drawer" role="document">
+        <div class="drawer-head">
+            <div class="drawer-title-row">
+                <div class="row-wrap" style="min-width:0">
+                    <h3 id="plugin-detail-title" style="word-break:break-all">插件详情</h3>
+                    <span id="plugin-detail-version" class="badge badge-info"></span>
+                    <span id="plugin-detail-status-badge" class="badge badge-neutral"></span>
+                    <span id="plugin-detail-update-badge" class="badge badge-danger hidden">有新版本</span>
                 </div>
-                <div class="tabs" style="border-bottom:0;padding-bottom:0;margin:0">
-                    <button type="button" class="tab-btn is-active plugin-detail-tab" data-plugin-tab="info" onclick="switchPluginTab('info')">信息</button>
-                    <button type="button" class="tab-btn plugin-detail-tab" data-plugin-tab="readme" onclick="switchPluginTab('readme')">README</button>
-                    <button type="button" class="tab-btn plugin-detail-tab" data-plugin-tab="config" onclick="switchPluginTab('config')">配置</button>
-                    <button type="button" class="tab-btn plugin-detail-tab" data-plugin-tab="logs" onclick="switchPluginTab('logs')">日志</button>
-                    <button type="button" class="tab-btn plugin-detail-tab" data-plugin-tab="metrics" onclick="switchPluginTab('metrics')">指标</button>
-                    <button type="button" class="tab-btn plugin-detail-tab" data-plugin-tab="apitest" onclick="switchPluginTab('apitest')">API 测试</button>
-                    <button type="button" class="tab-btn plugin-detail-tab" data-plugin-tab="source" onclick="switchPluginTab('source')">源码</button>
+                <div class="row-wrap">
+                    <button type="button" id="plugin-detail-toggle-btn" class="btn btn-warning btn-sm" onclick="togglePluginFromDetail()">禁用</button>
+                    <button type="button" class="btn btn-primary btn-sm" onclick="reloadPlugin(pluginDetailName)">
+                        <i class="fa-solid fa-rotate"></i>重载
+                    </button>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="backupPlugin(pluginDetailName)">
+                        <i class="fa-solid fa-hard-drive"></i>备份
+                    </button>
+                    <button type="button" class="btn btn-secondary btn-sm" onclick="checkPluginUpdate(pluginDetailName)">
+                        <i class="fa-solid fa-cloud-arrow-down"></i>检查更新
+                    </button>
+                    <button type="button" class="drawer-close" onclick="hidePluginDetailModal()" aria-label="关闭">
+                        <i class="fa-solid fa-xmark"></i>
+                    </button>
+                </div>
+            </div>
+            <div class="tabs drawer-tabs">
+                <button type="button" class="tab-btn is-active plugin-detail-tab" data-plugin-tab="info" onclick="switchPluginTab('info')">信息</button>
+                <button type="button" class="tab-btn plugin-detail-tab" data-plugin-tab="readme" onclick="switchPluginTab('readme')">README</button>
+                <button type="button" class="tab-btn plugin-detail-tab" data-plugin-tab="config" onclick="switchPluginTab('config')">配置</button>
+                <button type="button" class="tab-btn plugin-detail-tab" data-plugin-tab="logs" onclick="switchPluginTab('logs')">日志</button>
+                <button type="button" class="tab-btn plugin-detail-tab" data-plugin-tab="metrics" onclick="switchPluginTab('metrics')">指标</button>
+                <button type="button" class="tab-btn plugin-detail-tab" data-plugin-tab="apitest" onclick="switchPluginTab('apitest')">API 测试</button>
+                <button type="button" class="tab-btn plugin-detail-tab" data-plugin-tab="source" onclick="switchPluginTab('source')">源码</button>
+            </div>
+        </div>
+
+        <div class="drawer-body">
+            <div id="plugin-tab-info" class="plugin-detail-content">
+                <div id="plugin-detail-info" class="stack" style="gap:12px"></div>
+            </div>
+
+            <div id="plugin-tab-readme" class="plugin-detail-content hidden">
+                <div id="plugin-detail-readme" class="markdown-body card" style="box-shadow:none;padding:16px 18px"></div>
+            </div>
+
+            <div id="plugin-tab-config" class="plugin-detail-content hidden">
+                <p class="field-hint">编辑插件配置（JSON），保存后自动重载插件生效</p>
+                <div class="cm-host" data-cm-target="plugin-config-editor" data-cm-mode="json"></div>
+                <textarea id="plugin-config-editor" class="textarea cm-fallback" rows="16" spellcheck="false"
+                          style="font-family:var(--font-mono);font-size:12.5px"></textarea>
+                <div id="plugin-config-error" class="field-error hidden"></div>
+                <div class="row-end mt-3">
+                    <button type="button" class="btn btn-primary" onclick="savePluginConfig()">
+                        <i class="fa-solid fa-floppy-disk"></i>保存配置
+                    </button>
                 </div>
             </div>
 
-            <div class="modal-body">
-                <div id="plugin-tab-info" class="plugin-detail-content">
-                    <div id="plugin-detail-info" class="stack" style="gap:12px"></div>
+            <div id="plugin-tab-logs" class="plugin-detail-content hidden">
+                <div class="row-end mb-3">
+                    <button type="button" class="btn btn-primary btn-sm" onclick="loadPluginLogs(pluginDetailName)">
+                        <i class="fa-solid fa-rotate"></i>刷新日志
+                    </button>
                 </div>
+                <p class="field-hint">插件自身日志（plugins/&lt;名称&gt;/plugin.log）：</p>
+                <pre id="plugin-detail-file-logs" class="code-panel log-terminal"></pre>
+                <p class="field-hint mt-4">机器人运行日志中的相关行：</p>
+                <pre id="plugin-detail-bot-logs" class="code-panel log-terminal"></pre>
+            </div>
 
-                <div id="plugin-tab-readme" class="plugin-detail-content hidden">
-                    <div id="plugin-detail-readme" class="markdown-body card" style="box-shadow:none;padding:16px 18px"></div>
+            <div id="plugin-tab-metrics" class="plugin-detail-content hidden">
+                <div class="row-end mb-3">
+                    <button type="button" class="btn btn-primary btn-sm" onclick="loadPluginMetrics(pluginDetailName)">
+                        <i class="fa-solid fa-rotate"></i>刷新指标
+                    </button>
                 </div>
+                <div id="plugin-detail-metric-cards" class="stat-grid" style="margin-bottom:16px"></div>
+                <h4 class="field-label">仪表盘数据</h4>
+                <pre id="plugin-detail-metrics" class="code-panel" style="background:var(--surface-sunken);color:var(--ink)">加载中…</pre>
+            </div>
 
-                <div id="plugin-tab-config" class="plugin-detail-content hidden">
-                    <p class="field-hint">编辑插件配置（JSON），保存后自动重载插件生效</p>
-                    <textarea id="plugin-config-editor" class="textarea" rows="16" spellcheck="false"
-                              style="font-family:var(--font-mono);font-size:12.5px"></textarea>
-                    <div id="plugin-config-error" class="field-error hidden"></div>
-                    <div class="row-end mt-3">
-                        <button type="button" class="btn btn-primary" onclick="savePluginConfig()">
-                            <i class="fa-solid fa-floppy-disk"></i>保存配置
-                        </button>
-                    </div>
-                </div>
-
-                <div id="plugin-tab-logs" class="plugin-detail-content hidden">
-                    <div class="row-end mb-3">
-                        <button type="button" class="btn btn-primary btn-sm" onclick="loadPluginLogs(pluginDetailName)">
-                            <i class="fa-solid fa-rotate"></i>刷新日志
-                        </button>
-                    </div>
-                    <p class="field-hint">插件自身日志（plugins/&lt;名称&gt;/plugin.log）：</p>
-                    <pre id="plugin-detail-file-logs" class="code-panel log-terminal"></pre>
-                    <p class="field-hint mt-4">机器人运行日志中的相关行：</p>
-                    <pre id="plugin-detail-bot-logs" class="code-panel log-terminal"></pre>
-                </div>
-
-                <div id="plugin-tab-metrics" class="plugin-detail-content hidden">
-                    <div class="row-end mb-3">
-                        <button type="button" class="btn btn-primary btn-sm" onclick="loadPluginMetrics(pluginDetailName)">
-                            <i class="fa-solid fa-rotate"></i>刷新指标
-                        </button>
-                    </div>
-                    <div id="plugin-detail-metric-cards" class="stat-grid" style="margin-bottom:16px"></div>
-                    <h4 class="field-label">仪表盘数据</h4>
-                    <pre id="plugin-detail-metrics" class="code-panel" style="background:var(--surface-sunken);color:var(--ink)">加载中…</pre>
-                </div>
-
-                <div id="plugin-tab-apitest" class="plugin-detail-content hidden">
-                    <p class="field-hint">直接调用插件注册的 API 路由查看返回结果（经机器人进程代理）</p>
-                    <div class="row-wrap mb-3" style="align-items:stretch">
-                        <div style="flex:0 0 110px">
-                            <select id="plugin-api-method" class="select"
-                                    onchange="document.getElementById('plugin-api-body-wrap').classList.toggle('hidden', this.value === 'GET')">
-                                <option value="GET">GET</option>
-                                <option value="POST">POST</option>
-                            </select>
-                        </div>
-                        <div style="flex:1 1 220px">
-                            <input type="text" id="plugin-api-path" class="input" placeholder="/stats 或 /top" spellcheck="false"
-                                   style="font-family:var(--font-mono)">
-                        </div>
-                        <button type="button" class="btn btn-primary" onclick="testPluginApi()">
-                            <i class="fa-solid fa-paper-plane"></i>发送
-                        </button>
-                    </div>
-                    <div id="plugin-api-body-wrap" class="field mb-3 hidden">
-                        <label class="field-label" for="plugin-api-body">请求体（JSON，仅 POST）</label>
-                        <textarea id="plugin-api-body" class="textarea" rows="4" spellcheck="false" style="font-family:var(--font-mono)"></textarea>
-                    </div>
-                    <p class="field-hint">已注册路由：<span id="plugin-api-routes-hint" style="font-family:var(--font-mono);color:var(--primary)"></span></p>
-                    <p class="field-hint">响应：</p>
-                    <pre id="plugin-api-result" class="code-panel log-terminal">(尚未发送请求)</pre>
-                </div>
-
-                <div id="plugin-tab-source" class="plugin-detail-content hidden">
-                    <p class="field-hint">在线编辑插件目录下实际存在的文本文件，保存前自动语法检查并备份</p>
-                    <div class="field mb-3">
-                        <label class="field-label" for="plugin-source-file">编辑文件</label>
-                        <select id="plugin-source-file" class="select" onchange="updateSourceEditor()">
-                            <option value="">加载中…</option>
+            <div id="plugin-tab-apitest" class="plugin-detail-content hidden">
+                <p class="field-hint">直接调用插件注册的 API 路由查看返回结果（经机器人进程代理）</p>
+                <div class="row-wrap mb-3" style="align-items:stretch">
+                    <div style="flex:0 0 110px">
+                        <select id="plugin-api-method" class="select"
+                                onchange="document.getElementById('plugin-api-body-wrap').classList.toggle('hidden', this.value === 'GET')">
+                            <option value="GET">GET</option>
+                            <option value="POST">POST</option>
                         </select>
                     </div>
-                    <textarea id="plugin-source-editor" class="textarea" rows="20" spellcheck="false"
-                              style="font-family:var(--font-mono);font-size:12.5px"></textarea>
-                    <div id="plugin-source-error" class="field-error hidden"></div>
-                    <div class="row-end mt-3">
-                        <button type="button" class="btn btn-primary" onclick="savePluginSource()">
-                            <i class="fa-solid fa-floppy-disk"></i>保存并重载
-                        </button>
+                    <div style="flex:1 1 220px">
+                        <input type="text" id="plugin-api-path" class="input" placeholder="/stats 或 /top" spellcheck="false"
+                               style="font-family:var(--font-mono)">
                     </div>
+                    <button type="button" class="btn btn-primary" onclick="testPluginApi()">
+                        <i class="fa-solid fa-paper-plane"></i>发送
+                    </button>
                 </div>
+                <div id="plugin-api-body-wrap" class="field mb-3 hidden">
+                    <label class="field-label" for="plugin-api-body">请求体（JSON，仅 POST）</label>
+                    <textarea id="plugin-api-body" class="textarea" rows="4" spellcheck="false" style="font-family:var(--font-mono)"></textarea>
+                </div>
+                <p class="field-hint">已注册路由：<span id="plugin-api-routes-hint" style="font-family:var(--font-mono);color:var(--primary)"></span></p>
+                <p class="field-hint">响应：</p>
+                <pre id="plugin-api-result" class="code-panel log-terminal">(尚未发送请求)</pre>
+            </div>
+
+            <div id="plugin-tab-source" class="plugin-detail-content hidden">
+                <p class="field-hint">在线编辑插件目录下实际存在的文本文件，保存前自动语法检查并备份</p>
+                <div class="field mb-3">
+                    <label class="field-label" for="plugin-source-file">编辑文件</label>
+                    <select id="plugin-source-file" class="select" onchange="updateSourceEditor()">
+                        <option value="">加载中…</option>
+                    </select>
+                </div>
+                <div class="cm-host" data-cm-target="plugin-source-editor" data-cm-mode="auto"></div>
+                <textarea id="plugin-source-editor" class="textarea cm-fallback" rows="20" spellcheck="false"
+                          style="font-family:var(--font-mono);font-size:12.5px"></textarea>
+                <div id="plugin-source-error" class="field-error hidden"></div>
+                <div class="row-end mt-3">
+                    <button type="button" class="btn btn-primary" onclick="savePluginSource()">
+                        <i class="fa-solid fa-floppy-disk"></i>保存并重载
+                    </button>
+                </div>
+            </div>
+        </div>
+    </aside>
+</div>
+
+<!-- GitHub 加速源 -->
+<div id="github-source-modal" class="modal-mask hidden" role="dialog" aria-modal="true" aria-labelledby="github-source-title">
+    <div class="modal-wrap">
+        <div class="modal-card modal-lg">
+            <div class="modal-head">
+                <div>
+                    <h3 id="github-source-title">GitHub 加速源</h3>
+                    <p>默认直连官方，长时间无响应时自动切换到加速镜像</p>
+                </div>
+                <button type="button" class="modal-close" onclick="hideGithubSourceModal()" aria-label="关闭">
+                    <i class="fa-solid fa-xmark"></i>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="field">
+                    <span class="field-label">切换策略</span>
+                    <label class="check-row">
+                        <input type="radio" name="github-source-mode" id="github-source-mode-auto" value="auto">
+                        <span>
+                            <strong>自动（推荐）</strong>
+                            <em class="field-hint">官方优先，连接超时或长时间无响应时自动换源，并在 5 分钟内记住失败次数</em>
+                        </span>
+                    </label>
+                    <label class="check-row">
+                        <input type="radio" name="github-source-mode" id="github-source-mode-manual" value="manual">
+                        <span>
+                            <strong>手动指定</strong>
+                            <em class="field-hint">始终使用选定的源，不做自动切换</em>
+                        </span>
+                    </label>
+                </div>
+
+                <div class="field">
+                    <label class="field-label" for="github-source-mirror">加速源</label>
+                    <select id="github-source-mirror" class="select" onchange="updateGithubSourceCustom()">
+                        <option value="">加载中…</option>
+                    </select>
+                    <p class="field-hint" id="github-source-mirror-note"></p>
+                </div>
+
+                <div class="field hidden" id="github-source-custom-wrap">
+                    <label class="field-label" for="github-source-custom">自定义前缀</label>
+                    <input type="text" id="github-source-custom" class="input" spellcheck="false"
+                           placeholder="https://your-proxy.example.com/">
+                    <p class="field-hint">形如 <code>https://ghfast.top/</code>，请求时会拼在原始 GitHub 地址之前</p>
+                </div>
+
+                <div class="row-wrap">
+                    <button type="button" class="btn btn-secondary" onclick="probeGithubSources()">
+                        <i class="fa-solid fa-gauge-high"></i>测速全部源
+                    </button>
+                    <span class="field-hint" id="github-source-probe-status"></span>
+                </div>
+
+                <div class="table-wrap mt-3">
+                    <table class="data-table">
+                        <thead>
+                            <tr>
+                                <th>源</th>
+                                <th>延迟</th>
+                                <th>状态</th>
+                                <th>说明</th>
+                            </tr>
+                        </thead>
+                        <tbody id="github-source-health-body">
+                            <tr><td colspan="4" class="field-hint">加载中…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+            <div class="modal-foot">
+                <button type="button" class="btn btn-ghost" onclick="hideGithubSourceModal()">取消</button>
+                <button type="button" class="btn btn-primary" onclick="saveGithubSource()">
+                    <i class="fa-solid fa-floppy-disk"></i>保存设置
+                </button>
             </div>
         </div>
     </div>

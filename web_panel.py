@@ -31,6 +31,8 @@ import plugin_bridge
 from plugin_bridge import get_bridge
 import github
 from github import Github
+from github_source import github_source
+import plugin_tasks
 
 # 导入现有的配置管理
 import ConfigManage
@@ -40,7 +42,10 @@ UPDATE_CHECK_URL = "aHR0cDovLzExNC4xMzQuMTg4LjE4OD9pZD0x"
 Version = "2.0.5"
 system_name = platform.system()
 system_version = platform.version()
-disk_default = "/"
+# 磁盘统计路径：Termux 上优先统计用户共享存储，其他平台回退到根目录
+disk_default = "/storage/emulated/0/"
+if not os.path.isdir(disk_default):
+    disk_default = "/"
 
 if system_name == "Linux":
     #获取linux发行版名称
@@ -197,6 +202,19 @@ class PanelConfigManager:
             self.config["github"] = {}
         
         self.config["github"]["access_token"] = access_token
+        self.save_config()
+
+    def get_github_source(self):
+        """获取 GitHub 加速源配置(默认 auto: 官方优先, 失败自动换源)"""
+        source = self.config.get("github_source")
+        return source if isinstance(source, dict) else {}
+
+    def update_github_source(self, source_config):
+        """更新 GitHub 加速源配置(整段覆盖, 仅保留已知字段)"""
+        if not isinstance(source_config, dict):
+            return
+        allowed = ("mode", "mirror", "custom_prefix", "connect_timeout", "stall_timeout")
+        self.config["github_source"] = {k: source_config[k] for k in allowed if k in source_config}
         self.save_config()
 
 # 全局变量
@@ -423,6 +441,9 @@ class GitHubDiscussionManager:
 # 初始化GitHub讨论区管理器
 panel_config = PanelConfigManager(PANEL_CONFIG_FILE)
 github_manager = GitHubDiscussionManager(panel_config)
+
+# 把面板配置注入 GitHub 加速源（避免 github_source 模块与 web_panel 循环导入）
+github_source.bind_config(panel_config)
 
 
 # 初始化配置管理器
@@ -1348,31 +1369,108 @@ def plugins_list():
 @app.route('/api/plugins/install', methods=['POST'])
 @login_required
 def install_plugin():
-    """安装插件(面板进程不执行插件代码, 通过桥接命令让机器人热加载)"""
+    """创建插件安装任务：后台线程下载/校验/解压/热加载，前端轮询进度与日志。"""
     try:
-        data = request.json
-        repo_full_name = data.get('repo_full_name')
-        plugin_name = data.get('plugin_name')
+        data = request.get_json(silent=True) or {}
+        repo_full_name = str(data.get('repo_full_name') or '').strip()
+        plugin_name = str(data.get('plugin_name') or '').strip()
+        if not repo_full_name or not plugin_name:
+            return jsonify({'success': False, 'message': '缺少仓库名或插件名'})
+        if repo_full_name.count('/') != 1 or repo_full_name.startswith('/'):
+            return jsonify({'success': False, 'message': '仓库名格式应为 owner/repo'})
 
-        result = plugin_manager.download_plugin(repo_full_name, plugin_name)
-
-        if result:
-            # 通知机器人进程热加载新插件
-            bridge_result = get_bridge().send_command('load', plugin_name, wait=True)
-            log_handler.add_log(f"安装插件: {plugin_name}")
-            msg = '插件安装成功'
-            if bridge_result.get('bot_running'):
-                msg = f"{msg}，已通知机器人加载"
-            else:
-                msg = f"{msg}(机器人未运行，将在下次启动时加载)"
-            return jsonify({'success': True, 'message': msg,
-                            'bot_not_running': not bridge_result.get('bot_running', True)})
-        else:
-            return jsonify({'success': False, 'message': '插件安装失败(下载或校验未通过)'})
+        task = plugin_tasks.create_install_task(repo_full_name, plugin_name)
+        log_handler.add_log(f"开始安装插件: {plugin_name}（任务 {task['id']}）")
+        return jsonify({'success': True, 'message': '安装任务已创建', 'task': task})
 
     except Exception as e:
-        log_handler.add_log(f"安装插件失败: {str(e)}", "ERROR")
-        return jsonify({'success': False, 'message': f'安装失败: {str(e)}'})
+        log_handler.add_log(f"创建安装任务失败: {str(e)}", "ERROR")
+        return jsonify({'success': False, 'message': f'创建安装任务失败: {str(e)}'})
+
+
+@app.route('/api/plugins/install/<task_id>')
+@login_required
+def plugin_install_status(task_id):
+    """查询安装任务进度。after 为已收到的日志序号，用于增量拉取。"""
+    try:
+        after = request.args.get('after', 0, type=int) or 0
+        task = plugin_tasks.get_task(task_id, since=after)
+        if not task:
+            return jsonify({'success': False, 'message': '任务不存在或已过期'}), 404
+        return jsonify({'success': True, 'task': task})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'查询任务失败: {str(e)}'})
+
+
+@app.route('/api/plugins/installs')
+@login_required
+def plugin_install_list():
+    """列出最近的安装任务（页面刷新后用于恢复任务卡片）。"""
+    try:
+        limit = request.args.get('limit', 10, type=int) or 10
+        limit = max(1, min(limit, plugin_tasks.MAX_TASKS))
+        return jsonify({'success': True, 'tasks': plugin_tasks.list_tasks(limit=limit)})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'读取任务列表失败: {str(e)}'})
+
+
+@app.route('/api/plugins/install/<task_id>/cancel', methods=['POST'])
+@login_required
+def cancel_plugin_install(task_id):
+    """取消安装任务（已进入解压/写入阶段的步骤会尽快停止）。"""
+    try:
+        ok = plugin_tasks.cancel_task(task_id)
+        if not ok:
+            return jsonify({'success': False, 'message': '任务不存在或已结束'})
+        log_handler.add_log(f"已请求取消安装任务: {task_id}", "WARNING")
+        return jsonify({'success': True, 'message': '已请求取消'})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'取消失败: {str(e)}'})
+
+
+@app.route('/api/github/source', methods=['GET'])
+@login_required
+def get_github_source_settings():
+    """读取 GitHub 加速源设置、健康度与当前生效源。"""
+    try:
+        return jsonify({'success': True, **github_source.status()})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'读取加速源设置失败: {str(e)}'})
+
+
+@app.route('/api/github/source', methods=['POST'])
+@login_required
+def set_github_source_settings():
+    """切换加速源：auto=官方优先失败自动换源；manual=固定指定镜像。"""
+    try:
+        data = request.get_json(silent=True) or {}
+        github_source.update_settings(
+            mode=data.get('mode'),
+            mirror=data.get('mirror'),
+            custom_prefix=data.get('custom_prefix'),
+            connect_timeout=data.get('connect_timeout'),
+            stall_timeout=data.get('stall_timeout'),
+        )
+        settings = github_source.settings()
+        log_handler.add_log(
+            f"GitHub 加速源已更新: 模式={settings.get('mode')}, 源={settings.get('mirror')}")
+        return jsonify({'success': True, 'message': '加速源设置已保存',
+                        **github_source.status()})
+    except ValueError as e:
+        return jsonify({'success': False, 'message': str(e)})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'保存加速源设置失败: {str(e)}'})
+
+
+@app.route('/api/github/source/probe', methods=['POST'])
+@login_required
+def probe_github_sources():
+    """并发测速所有可用源，返回首字节延迟。"""
+    try:
+        results = github_source.probe(timeout=8.0)
+        return jsonify({'success': True, 'results': results})
+    except Exception as e:
+        return jsonify({'success': False, 'message': f'测速失败: {str(e)}'})
 
 @app.route('/api/plugins/uninstall', methods=['POST'])
 @login_required
@@ -2185,103 +2283,110 @@ def create_plugin():
 def get_system_stats():
     """获取系统状态信息。
 
-    Android/Termux 下 /proc/stat、/proc/meminfo 等文件可能因权限限制无法读取，
-    psutil 会抛出 PermissionError，因此这里对每一项都做降级处理，
-    保证接口始终返回完整结构，前端进度条不会因缺少字段而报错。
+    Android/Termux 下 /proc/stat、/proc/net/dev、/proc/loadavg 等文件通常
+    被 SELinux 限制为不可读，psutil 会抛出 PermissionError。此时相关指标
+    返回 None，由前端显示“不可用”，而不是把“读不到”误报成 0（用户会
+    误以为设备真的空闲）。内存 /proc/meminfo 与磁盘配额一般可读，仍正常返回。
     """
-    # CPU信息
+    # ---------- CPU ----------
     cpu_count = None
     cpu_count_logical = None
+    try:
+        cpu_count = psutil.cpu_count(logical=False)          # 物理核心
+        cpu_count_logical = psutil.cpu_count(logical=True)   # 逻辑核心
+    except Exception:
+        cpu_count = None
+        cpu_count_logical = None
+    if not cpu_count_logical:
+        cpu_count_logical = os.cpu_count()
+    if not cpu_count:
+        cpu_count = cpu_count_logical
+
     cpu_percent = None
     try:
-        cpu_count = psutil.cpu_count(logical=False)      # 物理核心
-        cpu_count_logical = psutil.cpu_count(logical=True)  # 逻辑核心
-    except Exception:
-        cpu_count_logical = cpu_count_logical or os.cpu_count()
-        cpu_count = cpu_count or cpu_count_logical
-    try:
-        cpu_percent = psutil.cpu_percent(interval=0.1)   # CPU使用率
+        cpu_percent = psutil.cpu_percent(interval=0.1)       # CPU 使用率
     except Exception:
         cpu_percent = None
 
-    # 系统负载（同时作为 CPU 使用率的兜底来源）
+    # 系统负载（部分平台同时缺失 psutil/os 版本，逐级降级）
     load_avg = None
     if platform.system() != 'Windows':
         try:
-            load_avg = [round(x, 2) for x in psutil.getloadavg()]
+            load_avg = [round(x, 2) for x in os.getloadavg()]
         except Exception:
             try:
-                load_avg = [round(x, 2) for x in os.getloadavg()]
+                load_avg = [round(x, 2) for x in psutil.getloadavg()]
             except Exception:
                 load_avg = None
 
-    if cpu_percent is None:
-        if load_avg:
-            cores = cpu_count_logical or cpu_count or 1
-            cpu_percent = max(0.0, min(100.0, load_avg[0] / cores * 100))
-        else:
-            cpu_percent = 0.0
-    cpu_percent = round(float(cpu_percent), 1)
+    # CPU 使用率来源：psutil 直接读取 > 系统负载换算 > 不可用
+    cpu_usage_source = None
+    if cpu_percent is not None:
+        cpu_usage_source = 'psutil'
+    elif load_avg:
+        cores = cpu_count_logical or cpu_count or 1
+        cpu_percent = max(0.0, min(100.0, load_avg[0] / cores * 100))
+        cpu_usage_source = 'loadavg'
+    if cpu_percent is not None:
+        cpu_percent = round(float(cpu_percent), 1)
 
-    # 内存信息
-    mem_total = mem_used = mem_percent = 0.0
+    # ---------- 内存 ----------
+    mem_total = mem_used = mem_percent = None
     try:
         mem = psutil.virtual_memory()
         mem_total = mem.total / (1024 ** 3)   # 总内存(GB)
         mem_used = mem.used / (1024 ** 3)     # 已用内存(GB)
         mem_percent = mem.percent             # 内存使用率
     except Exception:
-        pass
+        mem_total = mem_used = mem_percent = None
 
-    # 磁盘信息
-    disk_total = disk_used = disk_percent = 0.0
+    # ---------- 磁盘 ----------
+    disk_total = disk_used = disk_percent = None
     try:
         disk = psutil.disk_usage(disk_default)
         disk_total = disk.total / (1024 ** 3)  # 总磁盘空间(GB)
         disk_used = disk.used / (1024 ** 3)    # 已用磁盘空间(GB)
         disk_percent = disk.percent            # 磁盘使用率
     except Exception:
-        pass
+        disk_total = disk_used = disk_percent = None
 
-    # 网络IO信息
-    net_bytes_sent = net_bytes_recv = 0.0
-    net_packets_sent = net_packets_recv = 0
-    net_errin = net_errout = net_dropin = net_dropout = 0
+    # ---------- 网络 IO ----------
+    net_bytes_sent = net_bytes_recv = None
+    net_packets_sent = net_packets_recv = None
+    net_errin = net_errout = net_dropin = net_dropout = None
+    sent_speed = recv_speed = None
     net_io = None
     try:
         net_io = psutil.net_io_counters()
-        if net_io is not None:
-            net_bytes_sent = net_io.bytes_sent / (1024 ** 2)  # 发送数据量(MB)
-            net_bytes_recv = net_io.bytes_recv / (1024 ** 2)  # 接收数据量(MB)
-            net_packets_sent = net_io.packets_sent            # 发送包数量
-            net_packets_recv = net_io.packets_recv            # 接收包数量
-            net_errin = net_io.errin                          # 接收错误数
-            net_errout = net_io.errout                        # 发送错误数
-            net_dropin = net_io.dropin                        # 接收丢弃数
-            net_dropout = net_io.dropout                      # 发送丢弃数
     except Exception:
         net_io = None
 
-    # 计算网络速度（需要保存上一次的数据）
-    current_time = time.time()
-    sent_speed = 0
-    recv_speed = 0
-    last_net = getattr(get_system_stats, 'last_net_io', None)
     if net_io is not None:
+        net_bytes_sent = net_io.bytes_sent / (1024 ** 2)  # 发送数据量(MB)
+        net_bytes_recv = net_io.bytes_recv / (1024 ** 2)  # 接收数据量(MB)
+        net_packets_sent = net_io.packets_sent            # 发送包数量
+        net_packets_recv = net_io.packets_recv            # 接收包数量
+        net_errin = net_io.errin                          # 接收错误数
+        net_errout = net_io.errout                        # 发送错误数
+        net_dropin = net_io.dropin                        # 接收丢弃数
+        net_dropout = net_io.dropout                      # 发送丢弃数
+
+        # 计算网络速度（需要保存上一次的数据）
+        current_time = time.time()
+        last_net = getattr(get_system_stats, 'last_net_io', None)
         if last_net is None:
-            # 第一次调用，初始化数据
-            get_system_stats.last_net_io = net_io
-            get_system_stats.last_net_time = current_time
+            # 第一次调用，只记录基线
+            sent_speed = recv_speed = 0.0
         else:
-            # 计算时间差
             time_diff = current_time - getattr(get_system_stats, 'last_net_time', current_time)
             if time_diff > 0:
-                # 计算速度 (KB/s)
+                # 计算速度 (KB/s)，计数器回绕时结果为负，按 0 处理
                 sent_speed = max(0.0, (net_io.bytes_sent - last_net.bytes_sent) / time_diff / 1024)
                 recv_speed = max(0.0, (net_io.bytes_recv - last_net.bytes_recv) / time_diff / 1024)
-            # 更新上一次的数据
-            get_system_stats.last_net_io = net_io
-            get_system_stats.last_net_time = current_time
+            else:
+                sent_speed = recv_speed = 0.0
+        get_system_stats.last_net_io = net_io
+        get_system_stats.last_net_time = current_time
 
     # 系统信息
     system_info = {
@@ -2291,38 +2396,44 @@ def get_system_stats():
         'processor': platform.processor()
     }
 
+    def _round(value, digits):
+        return None if value is None else round(float(value), digits)
+
     return {
         'cpu': {
             'physical_cores': cpu_count,
             'logical_cores': cpu_count_logical,
-            'usage': cpu_percent
+            'usage': cpu_percent,               # None 表示当前平台不可读
+            'usage_source': cpu_usage_source,   # psutil / loadavg / None
         },
         'memory': {
-            'total': round(mem_total, 2),
-            'used': round(mem_used, 2),
-            'usage': round(float(mem_percent), 1)
+            'total': _round(mem_total, 2),
+            'used': _round(mem_used, 2),
+            'usage': _round(mem_percent, 1),
         },
         'disk': {
-            'total': round(disk_total, 2),
-            'used': round(disk_used, 2),
-            'usage': round(float(disk_percent), 1)
+            'total': _round(disk_total, 2),
+            'used': _round(disk_used, 2),
+            'usage': _round(disk_percent, 1),
         },
         'network': {
-            'bytes_sent': round(net_bytes_sent, 2),
-            'bytes_recv': round(net_bytes_recv, 2),
+            'available': net_io is not None,
+            'bytes_sent': _round(net_bytes_sent, 2),
+            'bytes_recv': _round(net_bytes_recv, 2),
             'packets_sent': net_packets_sent,
             'packets_recv': net_packets_recv,
             'errors_in': net_errin,
             'errors_out': net_errout,
             'drops_in': net_dropin,
             'drops_out': net_dropout,
-            'sent_speed': round(sent_speed, 2),  # 上传速度 KB/s
-            'recv_speed': round(recv_speed, 2)   # 下载速度 KB/s
+            'sent_speed': _round(sent_speed, 2),  # 上传速度 KB/s
+            'recv_speed': _round(recv_speed, 2),  # 下载速度 KB/s
         },
         'load_avg': load_avg,
         'system': system_info,
         'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     }
+
 
 @app.route('/api/proxy_image')
 @login_required

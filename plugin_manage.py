@@ -11,6 +11,7 @@ from typing import Dict, List, Any, Optional
 import logging
 from pathlib import Path
 from plugin_loader import plugin_loader
+from github_source import github_source
 
 PLUGIN_NAME_RE = re.compile(r'^[A-Za-z0-9_\-]+$')
 
@@ -86,9 +87,12 @@ class PluginManager:
             if github_token:
                 headers['Authorization'] = f"token {github_token}"
 
-            response = requests.get(search_url, params=params, headers=headers, timeout=15)
-            if response.status_code == 200:
-                data = response.json()
+            # 走加速源：官方优先，长时间无响应时自动切换镜像
+            data, source, status_code = github_source.get_json(
+                "api", search_url, params=params, headers=headers, timeout=(8, 20))
+            if status_code == 200 and isinstance(data, dict):
+                if source and source.get('id') != 'official':
+                    logging.info(f"插件搜索已通过加速源 {source.get('name')} 完成")
                 plugins = []
 
                 for repo in data.get('items', []):
@@ -112,12 +116,11 @@ class PluginManager:
                     plugins.append(plugin_info)
 
                 return plugins
-            elif response.status_code == 403:
+            if status_code == 403:
                 logging.error("GitHub 搜索被限流(未认证 10 次/分钟), 请检查 access_token 配置")
                 return []
-            else:
-                logging.error(f"搜索插件失败: {response.status_code}")
-                return []
+            logging.error(f"搜索插件失败: {status_code if status_code else '网络错误'}")
+            return []
 
         except Exception as e:
             logging.error(f"搜索插件时出错: {str(e)}")
@@ -129,13 +132,12 @@ class PluginManager:
         for b in branches:
             try:
                 package_url = f"https://raw.githubusercontent.com/{repo_full_name}/{b}/package.json"
-                response = requests.get(package_url, timeout=8)
-                if response.status_code == 200:
-                    data = response.json()
-                    if isinstance(data, dict):
-                        data.setdefault('_branch', b)
-                        return data
-            except:
+                data, _source, status_code = github_source.get_json(
+                    "raw", package_url, timeout=(4, 8))
+                if status_code == 200 and isinstance(data, dict):
+                    data.setdefault('_branch', b)
+                    return data
+            except Exception:
                 continue
         return None
 
@@ -175,29 +177,22 @@ class PluginManager:
                 logging.error("插件名不合法")
                 return False
 
-            # 下载ZIP文件(main 失败回退 master)
-            response = None
-            for branch in ['main', 'master']:
-                zip_url = f"https://github.com/{repo_full_name}/archive/refs/heads/{branch}.zip"
-                try:
-                    response = requests.get(zip_url, stream=True, timeout=60)
-                except Exception:
-                    continue
-                if response is not None and response.status_code == 200:
-                    break
-
-            if response is None or response.status_code != 200:
-                logging.error(f"下载插件失败: {response.status_code if response else '网络错误'}")
-                return False
-
             # 创建临时目录
             with tempfile.TemporaryDirectory() as temp_dir:
                 zip_path = os.path.join(temp_dir, f"{plugin_name}.zip")
 
-                # 保存ZIP文件
-                with open(zip_path, 'wb') as f:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        f.write(chunk)
+                # 下载ZIP文件(main 失败回退 master)，由 github_source 负责换源与停滞检测
+                downloaded = False
+                for branch in ['main', 'master']:
+                    zip_url = f"https://github.com/{repo_full_name}/archive/refs/heads/{branch}.zip"
+                    ok, source = github_source.download(zip_url, zip_path, kind="zip")
+                    if ok:
+                        logging.info(f"插件包下载成功(源: {source}, 分支: {branch})")
+                        downloaded = True
+                        break
+                if not downloaded:
+                    logging.error("下载插件失败: 所有 GitHub 源均不可用")
+                    return False
 
                 # 安全解压
                 if not self._safe_extract_zip(zip_path, temp_dir):

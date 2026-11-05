@@ -1190,6 +1190,15 @@ body.is-collapsed .app-main {
 }
 .net-stat.accent-sent strong { color: #dc2626; }
 .net-stat.accent-recv strong { color: #059669; }
+/* 指标不可用（如 Android 无 /proc 读取权限）：淡化显示，避免被误读成 0 */
+.net-stat strong.stat-unavailable {
+  font-family: var(--font-body);
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted-soft);
+  word-break: normal;
+}
+.gauge-meta.stat-unavailable { color: var(--muted-soft); }
 
 .chart-wrap {
   position: relative;
@@ -3206,3 +3215,260 @@ body.sidebar-open .overlay {
   white-space: nowrap;
   vertical-align: bottom;
 }
+
+/* --------------------------------------------------------------------------
+   插件详情抽屉（右侧滑入）
+   -------------------------------------------------------------------------- */
+.drawer-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  justify-content: flex-end;
+}
+.drawer-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(9, 14, 26, 0.5);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  animation: drawer-fade 0.2s ease both;
+}
+@keyframes drawer-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+.drawer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(760px, 100%);
+  height: 100%;
+  background: var(--surface);
+  border-left: 1px solid var(--line);
+  box-shadow: -24px 0 60px -40px rgba(16, 24, 40, 0.6);
+  animation: drawer-in 0.24s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes drawer-in {
+  from { transform: translateX(28px); opacity: 0.6; }
+  to { transform: none; opacity: 1; }
+}
+.drawer-head {
+  flex: 0 0 auto;
+  padding: 18px 22px 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: var(--surface);
+}
+.drawer-title-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.drawer-title-row h3 {
+  margin: 0;
+  font-family: var(--font-heading);
+  font-size: 17px;
+  font-weight: 800;
+  color: var(--ink);
+}
+.drawer-close {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.16s ease, background-color 0.16s ease;
+}
+.drawer-close:hover {
+  color: var(--ink);
+  background: var(--surface-sunken);
+}
+.drawer-tabs {
+  border-bottom: 0;
+  padding-bottom: 0;
+  margin: 0;
+  overflow-x: auto;
+  flex-wrap: nowrap;
+}
+.drawer-body {
+  flex: 1;
+  min-height: 0;
+  padding: 20px 22px 26px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+@media (max-width: 767px) {
+  .drawer { width: 100%; }
+  .drawer-head { padding: 14px 16px 0; }
+  .drawer-body { padding: 16px 16px 22px; }
+  .drawer-title-row { gap: 10px; }
+}
+
+/* --------------------------------------------------------------------------
+   插件安装任务（进度 + 日志）
+   -------------------------------------------------------------------------- */
+.install-task {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface-sunken);
+}
+.install-task-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.install-task-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  color: var(--ink);
+  font-size: 13px;
+}
+.install-task-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.install-task-stage {
+  margin: 0;
+}
+.install-task-log {
+  margin: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.install-task-log .log-line { display: block; }
+.install-task-log .log-time {
+  margin-right: 6px;
+  color: var(--muted-soft);
+}
+.install-task-log .log-line.is-warn { color: #b54708; }
+.install-task-log .log-line.is-error { color: var(--danger); }
+
+/* --------------------------------------------------------------------------
+   GitHub 加速源：单选行 + 数据表
+   -------------------------------------------------------------------------- */
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  cursor: pointer;
+  transition: border-color 0.16s ease, background-color 0.16s ease;
+}
+.check-row:hover { background: var(--surface-sunken); }
+.check-row input[type="radio"] {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--pink);
+  cursor: pointer;
+}
+.check-row strong {
+  display: block;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.check-row em {
+  display: block;
+  margin-top: 2px;
+  font-style: normal;
+}
+.table-wrap {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.data-table th,
+.data-table td {
+  padding: 9px 12px;
+  text-align: left;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--line-soft);
+}
+.data-table th {
+  background: var(--surface-sunken);
+  font-weight: 600;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.data-table tbody tr:last-child td { border-bottom: 0; }
+.data-table td:first-child { white-space: nowrap; color: var(--ink); }
+
+/* --------------------------------------------------------------------------
+   CodeMirror（开源编辑器主题，扁平无渐变）
+   -------------------------------------------------------------------------- */
+.cm-host { display: none; }
+.cm-host.is-ready { display: block; }
+.cm-host .CodeMirror {
+  height: auto;
+  min-height: 260px;
+  max-height: 56vh;
+  padding: 6px 0;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.cm-host .CodeMirror-scroll { min-height: 200px; }
+.cm-host .CodeMirror-gutters {
+  background: var(--surface-sunken);
+  border-right: 1px solid var(--line-soft);
+}
+.cm-host .CodeMirror-linenumber { color: var(--muted-soft); }
+.cm-host .CodeMirror-cursor { border-left: 1.5px solid var(--pink); }
+.cm-host .CodeMirror-selected { background: #e8eefc; }
+.cm-host .CodeMirror-activeline-background { background: #f6f9ff; }
+.cm-host .CodeMirror-matchingbracket {
+  color: var(--ink) !important;
+  border-bottom: 1px solid var(--pink);
+}
+.cm-host .CodeMirror .cm-keyword { color: #a626a4; }
+.cm-host .CodeMirror .cm-def { color: #1a56db; }
+.cm-host .CodeMirror .cm-string { color: #0a7d55; }
+.cm-host .CodeMirror .cm-number { color: #b54708; }
+.cm-host .CodeMirror .cm-comment { color: var(--muted-soft); font-style: italic; }
+.cm-host .CodeMirror .cm-property { color: #1a56db; }
+.cm-host .CodeMirror .cm-atom { color: #b54708; }
+.cm-host .CodeMirror .cm-tag { color: #a626a4; }
+.cm-host .CodeMirror .cm-attribute { color: #1a56db; }
+.cm-fallback { margin: 0; }
+/* 抽屉打开时锁定页面滚动 */
+body.drawer-open { overflow: hidden; }
+
