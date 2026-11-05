@@ -3318,6 +3318,7 @@ body.sidebar-open .overlay {
   padding: 20px 22px 26px;
   overflow-y: auto;
   overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 @media (max-width: 767px) {
@@ -3459,10 +3460,12 @@ body.sidebar-open .overlay {
    -------------------------------------------------------------------------- */
 .cm-host { display: none; }
 .cm-host.is-ready { display: block; }
+/* 必须给 CodeMirror 一个确定高度：它的内部滚动容器 .CodeMirror-scroll
+   是 height:100% + overflow:scroll，父级高度为 auto 时百分比高度失效，
+   长文件会被 .CodeMirror{overflow:hidden} 直接裁掉、无法向下滚动。 */
 .cm-host .CodeMirror {
-  height: auto;
-  min-height: 260px;
-  max-height: 56vh;
+  height: 420px;
+  height: clamp(260px, 52vh, 640px);
   padding: 6px 0;
   border: 1px solid var(--line);
   border-radius: var(--radius);
@@ -3472,7 +3475,11 @@ body.sidebar-open .overlay {
   font-size: 12.5px;
   line-height: 1.6;
 }
-.cm-host .CodeMirror-scroll { min-height: 200px; }
+.cm-host .CodeMirror-scroll {
+  min-height: 200px;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+}
 .cm-host .CodeMirror-gutters {
   background: var(--surface-sunken);
   border-right: 1px solid var(--line-soft);
@@ -3495,6 +3502,14 @@ body.sidebar-open .overlay {
 .cm-host .CodeMirror .cm-tag { color: #a626a4; }
 .cm-host .CodeMirror .cm-attribute { color: #1a56db; }
 .cm-fallback { margin: 0; }
+@media (max-width: 767px) {
+  /* 手机上编辑器区略矮，尽量给下方内容留出可见空间 */
+  .cm-host .CodeMirror {
+    height: 340px;
+    height: clamp(200px, 44vh, 460px);
+    font-size: 12px;
+  }
+}
 /* 抽屉打开时锁定页面滚动 */
 body.drawer-open { overflow: hidden; }
 
