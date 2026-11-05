@@ -117,7 +117,15 @@ python3 web_panel.py
 
 # Windows
 python web_panel.py
+
+# Android / Termux（推荐用脚本后台运行，避免切后台被挂起）
+sh panel.sh
 ```
+
+> **Termux 用户注意**：直接在终端前台运行后把 Termux 切到后台，进程可能被终端作业控制挂起
+> （`ps` 状态显示 `T`），此时端口不再监听，浏览器访问会一直卡住直到超时。
+> `sh panel.sh` 使用 `setsid + nohup` 让服务脱离终端运行，并提供
+> `sh panel.sh status|logs|restart|stop` 管理命令。
 
 #### 4. 访问控制面板
 
@@ -202,6 +210,28 @@ python web_panel.py
 <summary><b>Q: 如何备份配置数据？</b></summary>
 
 配置文件位于项目根目录的 `config.json`，定期备份此文件即可。
+</details>
+
+<details>
+<summary><b>Q: 面板打开一直转圈/访问超时怎么办？</b></summary>
+
+先确认服务进程是否还在监听。Android/Termux 上常见原因是进程被挂起：
+
+```bash
+sh panel.sh status   # 若 STAT 显示 T，说明进程被挂起
+sh panel.sh restart  # 重新后台启动
+```
+
+用 `sh panel.sh` 启动可避免该问题；另外请确认手机与访问设备在同一网络，
+并放行 5000 端口。
+</details>
+
+<details>
+<summary><b>Q: 系统监控里 CPU / 网络显示“不可用”？</b></summary>
+
+部分 Android 设备（尤其是未 root 时）禁止读取 `/proc/stat`、`/proc/net/dev`、
+`/proc/loadavg`，因此无法获取 CPU 占用与网络流量。面板会将这类指标显示为
+“不可用”，而不是错误地显示为 0；内存与磁盘仍可正常显示。
 </details>
 
 <details>
