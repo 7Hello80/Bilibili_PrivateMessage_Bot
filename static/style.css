@@ -3293,10 +3293,24 @@ body.sidebar-open .overlay {
 }
 .drawer-tabs {
   border-bottom: 0;
-  padding-bottom: 0;
-  margin: 0;
+  padding: 5px;
+  margin: 2px 0 0;
+  gap: 6px;
   overflow-x: auto;
   flex-wrap: nowrap;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.drawer-tabs::-webkit-scrollbar {
+  display: none;
+}
+.drawer-tabs .tab-btn {
+  flex: 0 0 auto;
+  height: 35px;
+  padding: 0 16px;
+  font-size: 13px;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
 }
 .drawer-body {
   flex: 1;
@@ -3311,6 +3325,18 @@ body.sidebar-open .overlay {
   .drawer-head { padding: 14px 16px 0; }
   .drawer-body { padding: 16px 16px 22px; }
   .drawer-title-row { gap: 10px; }
+  .drawer-tabs {
+    flex-wrap: wrap;
+    gap: 5px;
+    padding: 4px;
+  }
+  .drawer-tabs .tab-btn {
+    flex: 1 1 auto;
+    min-width: calc(25% - 4px);
+    height: 34px;
+    padding: 0 10px;
+    font-size: 12.5px;
+  }
 }
 
 /* --------------------------------------------------------------------------
