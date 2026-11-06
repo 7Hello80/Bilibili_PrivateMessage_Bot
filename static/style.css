@@ -1244,6 +1244,9 @@ body.is-collapsed .app-main {
   font-size: 13px;
   color: #4a5568;
   line-height: 1.7;
+  /* 公告/说明常含超长 URL 或连续字符，允许任意位置断行，避免撑破窄侧栏 */
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 .notice-body h3 {
   margin: 0 0 4px;

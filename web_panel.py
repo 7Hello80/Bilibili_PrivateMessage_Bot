@@ -37,13 +37,12 @@ import plugin_tasks
 # 导入现有的配置管理
 import ConfigManage
 
-CURRENT_VERSION = "MS4xLjQ="
-UPDATE_CHECK_URL = "aHR0cDovLzExNC4xMzQuMTg4LjE4OD9pZD0x"
+CURRENT_VERSION = "MS4xLjU="
+UPDATE_CHECK_URL = "aHR0cHM6Ly83aGVsbG84MC5naXRodWIuaW8vdXBkYXRlLmpzb24="
 Version = "2.0.5"
 system_name = platform.system()
 system_version = platform.version()
-# 磁盘统计路径：Termux 上优先统计用户共享存储，其他平台回退到根目录
-disk_default = "/storage/emulated/0/"
+disk_default = "/"
 if not os.path.isdir(disk_default):
     disk_default = "/"
 
@@ -1251,7 +1250,7 @@ def get_bot_status():
 def get_announcement():
     """获取远程公告"""
     try:
-        response = requests.get(ConfigManage.base64_decode("aHR0cDovLzExNC4xMzQuMTg4LjE4OD9pZD0y"))
+        response = requests.get(ConfigManage.base64_decode("aHR0cHM6Ly83aGVsbG84MC5naXRodWIuaW8vZ2cuaHRtbA=="))
         response.raise_for_status()
         data = response.text
         return jsonify({'success': True, 'message': data})
