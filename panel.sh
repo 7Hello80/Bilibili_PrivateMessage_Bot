@@ -18,7 +18,7 @@ cd "$(dirname "$0")" || exit 1
 
 LOG_DIR=".tmp"
 LOG_FILE="$LOG_DIR/server.log"
-PATTERN="python3 web_panel.py"
+PATTERN="python[0-9.]* web_panel\.py"
 
 mkdir -p "$LOG_DIR"
 
