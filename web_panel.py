@@ -37,13 +37,13 @@ import plugin_tasks
 # 导入现有的配置管理
 import ConfigManage
 
-CURRENT_VERSION = "MS4xLjQ="
+CURRENT_VERSION = "MS4xLjUA="
 UPDATE_CHECK_URL = "aHR0cDovLzExNC4xMzQuMTg4LjE4OD9pZD0x"
 Version = "2.0.5"
 system_name = platform.system()
 system_version = platform.version()
-# 磁盘统计路径：Termux 上优先统计用户共享存储，其他平台回退到根目录
-disk_default = "/storage/emulated/0/"
+
+disk_default = "/"
 if not os.path.isdir(disk_default):
     disk_default = "/"
 
