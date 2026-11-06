@@ -29,6 +29,10 @@
                 <i class="fa-solid fa-puzzle-piece"></i>
                 <span>插件商店</span>
             </a>
+            <a href="#ai_reply" onclick="showSection('ai_reply')" class="nav-link nav-item">
+                <i class="fa-solid fa-robot"></i>
+                <span>AI 自动回复</span>
+            </a>
             <a href="#comments" onclick="showSection('comments')" class="nav-link nav-item">
                 <i class="fa-solid fa-comments"></i>
                 <span>评论区管理</span>
@@ -730,6 +734,202 @@
                             <div id="images-list" class="image-grid">
                                 <div class="loading-row" style="grid-column:1/-1"><i class="fa-solid fa-spinner fa-spin"></i>加载图片中…</div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- AI 私信自动回复 -->
+            <section id="ai_reply" class="section" style="display: none;">
+                <div class="page-head">
+                    <div>
+                        <p class="page-eyebrow">Autoreply</p>
+                        <h2 class="page-title">AI 自动回复</h2>
+                        <p class="page-sub">粉丝私信由大模型自动生成回复，支持上下文记忆、用户冷却、每日限额与预览模式</p>
+                    </div>
+                    <div class="page-actions">
+                        <button type="button" class="btn btn-secondary" id="ai-test-btn" onclick="aiReplyTest()">
+                            <i class="fa-solid fa-plug-circle-check"></i>测试连接
+                        </button>
+                        <button type="button" class="btn btn-primary" id="ai-save-btn" onclick="aiReplySave()">
+                            <i class="fa-solid fa-floppy-disk"></i>保存配置
+                        </button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-body ai-status-grid">
+                        <div class="ai-status-item">
+                            <span class="ai-status-label">运行状态</span>
+                            <strong id="ai-status-plugin" class="ai-status-value">检查中…</strong>
+                            <span id="ai-status-plugin-hint" class="field-hint">插件是否已加载</span>
+                        </div>
+                        <div class="ai-status-item">
+                            <span class="ai-status-label">大模型</span>
+                            <strong id="ai-status-llm" class="ai-status-value">—</strong>
+                            <span id="ai-status-model" class="field-hint">未填写模型</span>
+                        </div>
+                        <div class="ai-status-item">
+                            <span class="ai-status-label">今日回复</span>
+                            <strong id="ai-status-today" class="ai-status-value">0</strong>
+                            <span id="ai-status-today-hint" class="field-hint">上限 200 条</span>
+                        </div>
+                        <div class="ai-status-item">
+                            <span class="ai-status-label">累计成功 / 失败</span>
+                            <strong id="ai-status-total" class="ai-status-value">0 / 0</strong>
+                            <span id="ai-status-queue" class="field-hint">队列空闲</span>
+                        </div>
+                    </div>
+                </div>
+
+                <p id="ai-reply-alert" class="field-hint ai-alert hidden"></p>
+
+                <div class="ai-layout">
+                    <div class="card">
+                        <div class="card-head">
+                            <div>
+                                <h3 class="card-title"><i class="fa-solid fa-brain"></i>大模型设置</h3>
+                                <p class="card-sub">支持任意 OpenAI 兼容接口：DeepSeek、通义千问、Kimi、Ollama、One-API 等</p>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="form-grid">
+                                <div class="field span-2">
+                                    <label class="field-label" for="ai-llm-base">接口地址（base_url）</label>
+                                    <input type="text" id="ai-llm-base" class="input"
+                                           placeholder="https://api.deepseek.com/v1" autocomplete="off">
+                                    <p class="field-hint">填到 /v1 即可，插件会自动拼接 /chat/completions</p>
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="ai-llm-model">模型</label>
+                                    <input type="text" id="ai-llm-model" class="input"
+                                           placeholder="deepseek-chat" autocomplete="off">
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="ai-llm-key">API Key</label>
+                                    <input type="password" id="ai-llm-key" class="input"
+                                           placeholder="sk-..." autocomplete="new-password">
+                                    <p class="field-hint" id="ai-llm-key-hint">保存在本地 config.json，不会提交到仓库</p>
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="ai-llm-temp">温度（0-2）</label>
+                                    <input type="number" id="ai-llm-temp" class="input" min="0" max="2" step="0.1" value="0.8">
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="ai-llm-maxtok">最大输出 tokens</label>
+                                    <input type="number" id="ai-llm-maxtok" class="input" min="16" max="8192" step="1" value="400">
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="ai-llm-timeout">请求超时（秒）</label>
+                                    <input type="number" id="ai-llm-timeout" class="input" min="5" max="300" step="5" value="45">
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="ai-llm-maxchars">回复字数上限</label>
+                                    <input type="number" id="ai-llm-maxchars" class="input" min="10" max="1000" step="10" value="200">
+                                </div>
+                                <div class="field span-2">
+                                    <label class="field-label" for="ai-llm-prompt">人设 / 系统提示词</label>
+                                    <textarea id="ai-llm-prompt" class="textarea" rows="4"
+                                              placeholder="描述你的身份、语气与不能说的话"></textarea>
+                                </div>
+                            </div>
+                            <div class="ai-inline-result">
+                                <span id="ai-test-result" class="field-hint"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-head">
+                            <div>
+                                <h3 class="card-title"><i class="fa-solid fa-sliders"></i>回复策略</h3>
+                                <p class="card-sub">控制谁会被回复、多久回复一次，以及是否真的发送</p>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="ai-switch-row">
+                                <div>
+                                    <strong>开启 AI 自动回复</strong>
+                                    <p class="field-hint">关闭后只保留 !ai 命令，不再自动回复私信</p>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="ai-reply-enabled" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+                            <div class="ai-switch-row">
+                                <div>
+                                    <strong>预览模式（dry_run）</strong>
+                                    <p class="field-hint">只生成并记录，不真正发送，建议先观察一段时间</p>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="ai-reply-dryrun">
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+
+                            <div class="form-grid mt-4">
+                                <div class="field">
+                                    <label class="field-label" for="ai-reply-cooldown">同一用户冷却（秒）</label>
+                                    <input type="number" id="ai-reply-cooldown" class="input" min="0" max="3600" step="5" value="20">
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="ai-reply-daily">每日回复上限</label>
+                                    <input type="number" id="ai-reply-daily" class="input" min="0" max="100000" step="10" value="200">
+                                    <p class="field-hint">0 表示不限制</p>
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="ai-reply-turns">上下文轮数</label>
+                                    <input type="number" id="ai-reply-turns" class="input" min="0" max="20" step="1" value="6">
+                                    <p class="field-hint">0 表示不带历史</p>
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="ai-reply-accounts">生效账号</label>
+                                    <input type="text" id="ai-reply-accounts" class="input"
+                                           placeholder="留空表示全部账号" autocomplete="off">
+                                </div>
+                                <div class="field span-2">
+                                    <label class="field-label" for="ai-reply-triggers">触发关键词</label>
+                                    <input type="text" id="ai-reply-triggers" class="input"
+                                           placeholder="留空表示所有私信都回复，例：咨询;合作" autocomplete="off">
+                                </div>
+                                <div class="field span-2">
+                                    <label class="field-label" for="ai-reply-ignores">忽略关键词</label>
+                                    <input type="text" id="ai-reply-ignores" class="input"
+                                           placeholder="命中则不回复，例：广告;互关;刷粉" autocomplete="off">
+                                </div>
+                                <div class="field span-2">
+                                    <label class="field-label" for="ai-reply-fallback">大模型失败时的兜底话术</label>
+                                    <textarea id="ai-reply-fallback" class="textarea" rows="2"
+                                              placeholder="留空则不发送（推荐留空，避免接口故障时刷屏）"></textarea>
+                                </div>
+                            </div>
+                            <p class="field-hint mt-3">关键词支持用 ; ，或换行分隔。多个账号名称同样用分隔符隔开。</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-head">
+                        <div>
+                            <h3 class="card-title"><i class="fa-solid fa-clock-rotate-left"></i>回复记录</h3>
+                            <p class="card-sub" id="ai-history-sub">最近 20 条</p>
+                        </div>
+                        <div class="row-wrap">
+                            <button type="button" class="btn btn-ghost btn-sm" onclick="aiReplyLoadHistory()">
+                                <i class="fa-solid fa-rotate"></i>刷新
+                            </button>
+                            <button type="button" class="btn btn-ghost btn-sm" onclick="aiReplyClearMemory()">
+                                <i class="fa-solid fa-eraser"></i>清空上下文
+                            </button>
+                            <button type="button" class="btn btn-ghost btn-sm" onclick="aiReplyClearHistory()">
+                                <i class="fa-solid fa-trash"></i>清空记录
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="ai-history-list" class="ai-history">
+                            <p class="field-hint">暂无记录</p>
                         </div>
                     </div>
                 </div>

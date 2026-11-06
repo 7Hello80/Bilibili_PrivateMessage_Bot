@@ -11,6 +11,18 @@ import sqlite3
 import hashlib
 import os
 
+class _SuppressReply:
+    """单例响应对象: 插件返回它表示消息已由插件异步接管,
+    主循环不要再发送任何回复。"""
+    __slots__ = ()
+
+    def __repr__(self):
+        return '<SUPPRESS_REPLY>'
+
+
+SUPPRESS_REPLY = _SuppressReply()
+
+
 class PluginLogger:
     """插件专用日志记录器(同时落盘到 plugins/<name>/plugin.log)"""
 

@@ -17,6 +17,7 @@ import wbi
 import bili_ticket
 from plugin_loader import plugin_loader
 import plugin_bridge
+import plugin_dev
 
 if hasattr(sys.stdout, 'reconfigure'):
     sys.stdout.reconfigure(encoding='utf-8')
@@ -704,6 +705,12 @@ class SimpleBilibiliReply:
                     reply_plugin = None
                     if self.plugin_loader:
                         plugin_reply, reply_plugin = self.process_message_with_plugins(message_text, message_data)
+
+                    # 插件返回该哨兵: 消息已由插件异步接管(例如 AI 回复插件自行发送),
+                    # 主循环不再走关键词/关注检查, 避免同一条私信被回复两次
+                    if plugin_reply is plugin_dev.SUPPRESS_REPLY:
+                        self._remember_msg(msg_id)
+                        continue
 
                     if plugin_reply:
                         reply = plugin_reply

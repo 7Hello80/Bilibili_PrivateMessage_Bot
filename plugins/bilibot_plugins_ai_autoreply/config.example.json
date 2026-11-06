@@ -1,0 +1,23 @@
+{
+    "llm": {
+        "base_url": "https://api.deepseek.com/v1",
+        "api_key": "",
+        "model": "deepseek-chat",
+        "temperature": 0.8,
+        "max_tokens": 400,
+        "timeout": 45,
+        "max_reply_chars": 200,
+        "system_prompt": "你是 B 站 UP 主的私信助理，替主人回复粉丝私信。请用自然、真诚、口语化的中文回答，句子简短，不要用营销腔，不要编造主人没有说过的事实，也不要承诺任何无法兑现的事情。遇到你无法确认的问题，就礼貌说明会让主人本人来回复。"
+    },
+    "reply": {
+        "enabled": true,
+        "dry_run": false,
+        "trigger_keywords": [],
+        "ignore_keywords": [],
+        "cooldown_seconds": 20,
+        "max_replies_per_day": 200,
+        "history_turns": 6,
+        "accounts": [],
+        "fallback_reply": ""
+    }
+}

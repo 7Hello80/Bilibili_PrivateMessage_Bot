@@ -131,6 +131,7 @@ const SECTION_LABELS = {
     plugins: '插件商店',
     logs: '运行日志',
     image_bed: '图床管理',
+    ai_reply: 'AI 自动回复',
     comments: '评论区管理',
     admin: '账号设置',
     about: '关于我们'
@@ -1795,6 +1796,11 @@ function showSection(sectionId) {
     // 评论区管理：首次进入时加载账号与默认配置
     if (sectionId === 'comments') {
         initCommentsPanel();
+    }
+
+    // AI 自动回复：进入时刷新配置、状态与记录
+    if (sectionId === 'ai_reply') {
+        initAiReplyPanel();
     }
 
     // 在移动端选择后关闭抽屉
@@ -5550,3 +5556,421 @@ document.addEventListener('DOMContentLoaded', function () {
         initCommentsPanel();
     }
 });
+
+// ================= AI 私信自动回复 =================
+const AI_REPLY_PLUGIN = 'bilibot_plugins_ai_autoreply';
+const AI_REPLY_API = '/api/plugins/api/' + AI_REPLY_PLUGIN;
+
+const AI_REPLY_DEFAULTS = {
+    llm: {
+        base_url: 'https://api.deepseek.com/v1',
+        api_key: '',
+        model: 'deepseek-chat',
+        temperature: 0.8,
+        max_tokens: 400,
+        timeout: 45,
+        max_reply_chars: 200,
+        system_prompt: ''
+    },
+    reply: {
+        enabled: true,
+        dry_run: false,
+        trigger_keywords: [],
+        ignore_keywords: [],
+        cooldown_seconds: 20,
+        max_replies_per_day: 200,
+        history_turns: 6,
+        accounts: [],
+        fallback_reply: ''
+    }
+};
+
+let aiReplyConfigLoaded = false;
+
+function aiEscape(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function aiSplitList(value) {
+    if (Array.isArray(value)) return value.map(v => String(v).trim()).filter(Boolean);
+    return String(value == null ? '' : value)
+        .split(/[;；,，\n]/)
+        .map(v => v.trim())
+        .filter(Boolean);
+}
+
+function aiSetValue(id, value) {
+    const el = document.getElementById(id);
+    if (el) el.value = value == null ? '' : value;
+}
+
+function aiGetValue(id) {
+    const el = document.getElementById(id);
+    return el ? el.value.trim() : '';
+}
+
+function aiGetNumber(id, fallback) {
+    const raw = aiGetValue(id);
+    if (raw === '') return fallback;
+    const num = Number(raw);
+    return Number.isFinite(num) ? num : fallback;
+}
+
+function aiShowAlert(message, isError) {
+    const el = document.getElementById('ai-reply-alert');
+    if (!el) return;
+    if (!message) {
+        el.textContent = '';
+        el.classList.add('hidden');
+        return;
+    }
+    el.textContent = message;
+    el.classList.toggle('is-error', !!isError);
+    el.classList.remove('hidden');
+}
+
+function aiSetHint(id, text, state) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = text || '';
+    el.classList.toggle('is-ok', state === 'ok');
+    el.classList.toggle('is-error', state === 'error');
+}
+
+function aiMergeConfig(raw) {
+    const cfg = JSON.parse(JSON.stringify(AI_REPLY_DEFAULTS));
+    if (raw && typeof raw === 'object') {
+        ['llm', 'reply'].forEach(group => {
+            if (raw[group] && typeof raw[group] === 'object') {
+                Object.keys(raw[group]).forEach(key => {
+                    if (raw[group][key] !== null && raw[group][key] !== undefined) {
+                        cfg[group][key] = raw[group][key];
+                    }
+                });
+            }
+        });
+    }
+    return cfg;
+}
+
+async function aiReplyRequest(path, options) {
+    const resp = await fetch(AI_REPLY_API + path, options);
+    let data = {};
+    try {
+        data = await resp.json();
+    } catch (e) {
+        data = {};
+    }
+    if (!resp.ok || data.success === false || data.error) {
+        const msg = data.message || data.error || ('请求失败 HTTP ' + resp.status);
+        throw new Error(resp.status === 503 ? '机器人未运行，插件接口不可用（请先在控制台启动机器人）' : msg);
+    }
+    return data;
+}
+
+function aiReplyFillForm(cfg) {
+    aiSetValue('ai-llm-base', cfg.llm.base_url);
+    aiSetValue('ai-llm-model', cfg.llm.model);
+    aiSetValue('ai-llm-key', cfg.llm.api_key);
+    aiSetValue('ai-llm-temp', cfg.llm.temperature);
+    aiSetValue('ai-llm-maxtok', cfg.llm.max_tokens);
+    aiSetValue('ai-llm-timeout', cfg.llm.timeout);
+    aiSetValue('ai-llm-maxchars', cfg.llm.max_reply_chars);
+    aiSetValue('ai-llm-prompt', cfg.llm.system_prompt);
+
+    const enabled = document.getElementById('ai-reply-enabled');
+    if (enabled) enabled.checked = !!cfg.reply.enabled;
+    const dryRun = document.getElementById('ai-reply-dryrun');
+    if (dryRun) dryRun.checked = !!cfg.reply.dry_run;
+
+    aiSetValue('ai-reply-cooldown', cfg.reply.cooldown_seconds);
+    aiSetValue('ai-reply-daily', cfg.reply.max_replies_per_day);
+    aiSetValue('ai-reply-turns', cfg.reply.history_turns);
+    aiSetValue('ai-reply-accounts', (cfg.reply.accounts || []).join(';'));
+    aiSetValue('ai-reply-triggers', (cfg.reply.trigger_keywords || []).join(';'));
+    aiSetValue('ai-reply-ignores', (cfg.reply.ignore_keywords || []).join(';'));
+    aiSetValue('ai-reply-fallback', cfg.reply.fallback_reply);
+
+    const keyHint = document.getElementById('ai-llm-key-hint');
+    if (keyHint) {
+        const hasKey = !!(cfg.llm.api_key_set || cfg.llm.api_key);
+        keyHint.textContent = hasKey
+            ? '已配置 Key（保存在本地 config.json，不会提交到仓库；留空保存表示不修改）'
+            : '尚未配置 Key；本地 Ollama 等服务可以留空';
+    }
+}
+
+function aiReplyCollect() {
+    const enabled = document.getElementById('ai-reply-enabled');
+    const dryRun = document.getElementById('ai-reply-dryrun');
+    return {
+        llm: {
+            base_url: aiGetValue('ai-llm-base'),
+            model: aiGetValue('ai-llm-model'),
+            api_key: aiGetValue('ai-llm-key'),
+            temperature: aiGetNumber('ai-llm-temp', 0.8),
+            max_tokens: aiGetNumber('ai-llm-maxtok', 400),
+            timeout: aiGetNumber('ai-llm-timeout', 45),
+            max_reply_chars: aiGetNumber('ai-llm-maxchars', 200),
+            system_prompt: aiGetValue('ai-llm-prompt')
+        },
+        reply: {
+            enabled: enabled ? enabled.checked : true,
+            dry_run: dryRun ? dryRun.checked : false,
+            cooldown_seconds: aiGetNumber('ai-reply-cooldown', 20),
+            max_replies_per_day: aiGetNumber('ai-reply-daily', 200),
+            history_turns: aiGetNumber('ai-reply-turns', 6),
+            accounts: aiSplitList(aiGetValue('ai-reply-accounts')),
+            trigger_keywords: aiSplitList(aiGetValue('ai-reply-triggers')),
+            ignore_keywords: aiSplitList(aiGetValue('ai-reply-ignores')),
+            fallback_reply: aiGetValue('ai-reply-fallback')
+        }
+    };
+}
+
+async function aiReplyLoadConfig() {
+    let raw = null;
+    try {
+        // 优先用插件接口: 不会把已保存的 API Key 明文送到浏览器
+        const data = await aiReplyRequest('/config');
+        raw = { llm: data.llm || {}, reply: data.reply || {} };
+    } catch (e) {
+        // 机器人未运行时退回读取本地配置文件(不显示明文 Key)
+        try {
+            const resp = await fetch('/api/plugins/config?plugin_name=' + encodeURIComponent(AI_REPLY_PLUGIN));
+            const data = await resp.json();
+            if (!data || data.success === false) {
+                throw new Error((data && data.message) || '读取失败');
+            }
+            const stored = (data.config && data.config.llm) || {};
+            const key = stored.api_key || '';
+            raw = {
+                llm: Object.assign({}, stored, { api_key: '', api_key_set: !!key }),
+                reply: (data.config && data.config.reply) || {}
+            };
+        } catch (inner) {
+            aiShowAlert('读取配置失败：' + (inner.message || e.message), true);
+            return;
+        }
+    }
+    const cfg = aiMergeConfig(raw);
+    aiReplyConfigLoaded = true;
+    aiReplyFillForm(cfg);
+    aiShowAlert('');
+}
+
+async function aiReplySave() {
+    const btn = document.getElementById('ai-save-btn');
+    const cfg = aiReplyCollect();
+    if (!cfg.llm.base_url) {
+        showNotification('请填写接口地址 base_url', 'error');
+        return;
+    }
+    if (!cfg.llm.model) {
+        showNotification('请填写模型名称', 'error');
+        return;
+    }
+    if (btn) btn.disabled = true;
+    try {
+        // 走插件接口保存: 留空的 API Key 不会覆盖已保存的 Key
+        const data = await aiReplyRequest('/config/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ llm: cfg.llm, reply: cfg.reply })
+        });
+        showNotification(data.message || '配置已保存', 'success');
+        aiShowAlert(cfg.reply.dry_run
+            ? '已保存：当前是预览模式，AI 只会生成记录，不会真的发送私信。'
+            : '已保存：AI 将自动回复符合条件的私信。', false);
+        if (!cfg.reply.enabled) {
+            aiShowAlert('已保存：AI 自动回复处于关闭状态。', false);
+        }
+        await aiReplyLoadConfig();
+        await aiReplyLoadStats();
+    } catch (e) {
+        showNotification('保存失败：' + e.message, 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function aiReplyTest() {
+    const btn = document.getElementById('ai-test-btn');
+    if (btn) btn.disabled = true;
+    aiSetHint('ai-test-result', '正在请求大模型…');
+    try {
+        const data = await aiReplyRequest('/ai/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                llm: {
+                    base_url: aiGetValue('ai-llm-base'),
+                    model: aiGetValue('ai-llm-model'),
+                    api_key: aiGetValue('ai-llm-key'),
+                    timeout: aiGetNumber('ai-llm-timeout', 45)
+                }
+            })
+        });
+        aiSetHint('ai-test-result',
+            '连接成功 · ' + (data.model || '') + ' · ' + (data.latency_ms || 0) + 'ms：' + (data.text || ''),
+            'ok');
+        showNotification('大模型连接成功', 'success');
+    } catch (e) {
+        aiSetHint('ai-test-result', '连接失败：' + e.message, 'error');
+        showNotification('连接失败：' + e.message, 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+function aiReplyRenderStats(stats) {
+    const pluginEl = document.getElementById('ai-status-plugin');
+    const pluginHint = document.getElementById('ai-status-plugin-hint');
+    if (pluginEl) {
+        const running = stats && stats.worker_alive;
+        pluginEl.textContent = running ? '运行中' : '未就绪';
+        pluginEl.className = 'ai-status-value ' + (running ? 'is-ok' : 'is-off');
+    }
+    if (pluginHint) {
+        const dry = stats && stats.dry_run;
+        pluginHint.textContent = dry ? '预览模式：只记录不发送' : (stats && stats.enabled ? '自动回复已开启' : '自动回复已关闭');
+    }
+
+    const llmEl = document.getElementById('ai-status-llm');
+    if (llmEl) {
+        const ready = stats && stats.llm_ready;
+        llmEl.textContent = ready ? '已就绪' : '未配置';
+        llmEl.className = 'ai-status-value ' + (ready ? 'is-ok' : 'is-off');
+    }
+    const modelEl = document.getElementById('ai-status-model');
+    if (modelEl) modelEl.textContent = (stats && stats.model) || '未填写模型';
+
+    const todayEl = document.getElementById('ai-status-today');
+    if (todayEl) todayEl.textContent = (stats && stats.replies_today) || 0;
+    const todayHint = document.getElementById('ai-status-today-hint');
+    if (todayHint) {
+        todayHint.textContent = '上限 ' + aiGetNumber('ai-reply-daily', 200) + ' 条/天';
+    }
+
+    const totalEl = document.getElementById('ai-status-total');
+    if (totalEl) {
+        totalEl.textContent = ((stats && stats.replies_sent) || 0) + ' / ' + ((stats && stats.failed) || 0);
+    }
+    const queueEl = document.getElementById('ai-status-queue');
+    if (queueEl) {
+        const q = (stats && stats.queue_size) || 0;
+        queueEl.textContent = q > 0 ? ('排队 ' + q + ' 条') : '队列空闲';
+    }
+}
+
+function aiReplyRenderUnavailable(message) {
+    const pluginEl = document.getElementById('ai-status-plugin');
+    if (pluginEl) {
+        pluginEl.textContent = '不可用';
+        pluginEl.className = 'ai-status-value is-idle';
+    }
+    aiSetHint('ai-status-plugin-hint', message || '机器人未运行');
+    aiSetHint('ai-status-llm', '—');
+    aiSetHint('ai-status-model', '—');
+}
+
+async function aiReplyLoadStats() {
+    try {
+        const data = await aiReplyRequest('/stats');
+        aiReplyRenderStats(data.stats || {});
+    } catch (e) {
+        aiReplyRenderUnavailable(e.message);
+    }
+}
+
+async function aiReplyLoadHistory() {
+    const list = document.getElementById('ai-history-list');
+    const sub = document.getElementById('ai-history-sub');
+    if (!list) return;
+    if (!aiReplyConfigLoaded) return;
+    try {
+        const data = await aiReplyRequest('/history?limit=20');
+        const items = data.items || [];
+        if (sub) sub.textContent = items.length
+            ? ('最近 ' + items.length + ' 条记录')
+            : '暂无记录';
+        if (!items.length) {
+            list.innerHTML = '<p class="field-hint">暂无记录。AI 回复或预览生成后会显示在这里。</p>';
+            return;
+        }
+        list.innerHTML = items.map(item => {
+            const note = String(item.note || '');
+            const isError = !item.ok;
+            const isDry = note === 'dry_run';
+            const tagClass = isError ? 'is-error' : (isDry ? 'is-dry' : 'is-ok');
+            const tagText = isError ? '失败' : (isDry ? '预览' : '已发送');
+            const itemClass = isError ? 'is-error' : (isDry ? 'is-dry' : '');
+            const time = item.time || '';
+            const uid = item.uid || '';
+            const model = item.model || '';
+            const latency = item.latency_ms ? (item.latency_ms + 'ms') : '';
+            const noteHtml = isError && note
+                ? '<div class="ai-history-note">' + aiEscape(note) + '</div>'
+                : '';
+            return `
+            <div class="ai-history-item ${itemClass}">
+                <div class="ai-history-head">
+                    <span class="ai-history-tag ${tagClass}">${tagText}</span>
+                    <span>UID ${aiEscape(uid)}</span>
+                    ${model ? '<span>' + aiEscape(model) + '</span>' : ''}
+                    ${latency ? '<span>' + aiEscape(latency) + '</span>' : ''}
+                    <span style="margin-left:auto">${aiEscape(time)}</span>
+                </div>
+                <div class="ai-history-q">${aiEscape(item.question || '')}</div>
+                ${item.answer ? '<div class="ai-history-a">' + aiEscape(item.answer) + '</div>' : ''}
+                ${noteHtml}
+            </div>`;
+        }).join('');
+    } catch (e) {
+        if (sub) sub.textContent = '读取失败';
+        list.innerHTML = '<p class="field-hint">' + aiEscape(e.message) + '</p>';
+    }
+}
+
+async function aiReplyClearMemory() {
+    if (!window.confirm('确定清空所有用户与 AI 的对话上下文吗？此操作不可恢复。')) return;
+    try {
+        const data = await aiReplyRequest('/memory/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        showNotification(data.message || '已清空上下文', 'success');
+    } catch (e) {
+        showNotification('操作失败：' + e.message, 'error');
+    }
+}
+
+async function aiReplyClearHistory() {
+    if (!window.confirm('确定清空回复记录与统计数据吗？')) return;
+    try {
+        const data = await aiReplyRequest('/history/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        showNotification(data.message || '记录已清空', 'success');
+        await aiReplyLoadHistory();
+        await aiReplyLoadStats();
+    } catch (e) {
+        showNotification('操作失败：' + e.message, 'error');
+    }
+}
+
+function initAiReplyPanel() {
+    if (!aiReplyConfigLoaded) {
+        aiReplyLoadConfig();
+    }
+    aiReplyLoadStats();
+    aiReplyLoadHistory();
+}

@@ -1,0 +1,13 @@
+{
+    "name": "bilibot_plugins_ai_autoreply",
+    "version": "1.0.0",
+    "description": "AI 私信自动回复：接入大模型(OpenAI 兼容接口)自动回复 B 站私信，带上下文记忆、冷却与每日限额，支持预览模式",
+    "author": "淡意往事",
+    "type": "api",
+    "repository": "",
+    "license": "MIT",
+    "enabled": true,
+    "load_order": 10,
+    "dependencies": [],
+    "bypass_follow_check": true
+}
