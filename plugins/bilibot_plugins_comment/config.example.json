@@ -1,0 +1,26 @@
+{
+    "llm": {
+        "base_url": "https://api.openai.com/v1",
+        "api_key": "",
+        "model": "gpt-4o-mini",
+        "temperature": 0.7,
+        "max_tokens": 512,
+        "timeout": 60,
+        "max_reply_chars": 120,
+        "system_prompt": "你是熟悉 B 站社区文化的评论区助理。请用自然、真诚、口语化的中文回复评论，不要使用营销腔，不要编造事实，不要输出与回复正文无关的解释。"
+    },
+    "auto_reply": {
+        "enabled": false,
+        "oid": "",
+        "type": 1,
+        "interval_minutes": 10,
+        "max_per_run": 2,
+        "dry_run": true,
+        "skip_up_replied": true,
+        "style": "友好",
+        "extra_prompt": ""
+    },
+    "default_type": 1,
+    "default_target": "",
+    "accounts_index": 0
+}

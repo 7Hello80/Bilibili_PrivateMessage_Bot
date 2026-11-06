@@ -224,6 +224,10 @@ plugin_backups/
 plugins/*/plugin.log
 plugins/*/*.db
 plugins/*/cache.json
+# 插件本地配置(可能含 LLM API Key; 仅提交 config.example.json)
+plugins/*/config.json
+# 第三方参考文档仓库(体积大, 不纳入版本控制)
+bilibili-API-collect/
 # 私有插件(用户自用, 不公开)
 plugins/redeem_code/
 plugins/bilibot_plugins_redeem_code/
