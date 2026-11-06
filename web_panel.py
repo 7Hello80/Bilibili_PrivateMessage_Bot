@@ -1910,8 +1910,11 @@ def plugin_api_proxy(plugin_name, path):
         body = None
         if request.method == 'POST':
             body = request.get_json(silent=True) or {}
+        # 保留原始查询字符串，否则 GET 参数(如 target/pn/ps)会被丢弃
+        query = request.query_string.decode('utf-8', 'ignore')
+        full_path = '/' + path + (('?' + query) if query else '')
         status_code, result = get_bridge().proxy_api(
-            plugin_name, '/' + path, request.method, body)
+            plugin_name, full_path, request.method, body)
         if isinstance(result, dict):
             return jsonify(result), status_code
         return jsonify({'success': True, 'data': result}), status_code
