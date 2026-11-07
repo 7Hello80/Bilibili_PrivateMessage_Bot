@@ -33,6 +33,10 @@
                 <i class="fa-solid fa-robot"></i>
                 <span>AI 自动回复</span>
             </a>
+            <a href="#comment_reply" onclick="showSection('comment_reply')" class="nav-link nav-item">
+                <i class="fa-solid fa-comments"></i>
+                <span>评论自动回复</span>
+            </a>
             <a href="#image_bed" onclick="showSection('image_bed')" class="nav-link nav-item">
                 <i class="fa-solid fa-images"></i>
                 <span>图床管理</span>
@@ -925,6 +929,287 @@
                     </div>
                     <div class="card-body">
                         <div id="ai-history-list" class="ai-history">
+                            <p class="field-hint">暂无记录</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 评论区自动回复 -->
+            <section id="comment_reply" class="section" style="display: none;">
+                <div class="page-head">
+                    <div>
+                        <p class="page-eyebrow">Comment Autoreply</p>
+                        <h2 class="page-title">评论自动回复</h2>
+                        <p class="page-sub">定时扫描视频 / 动态 / 专栏评论区，用大模型自动回复新评论，支持关键词过滤、冷却、每日限额与预览模式</p>
+                    </div>
+                    <div class="page-actions">
+                        <button type="button" class="btn btn-secondary" id="cm-scan-btn" onclick="commentReplyScan()">
+                            <i class="fa-solid fa-magnifying-glass"></i>立即扫描
+                        </button>
+                        <button type="button" class="btn btn-secondary" id="cm-test-btn" onclick="commentReplyTest()">
+                            <i class="fa-solid fa-plug-circle-check"></i>测试连接
+                        </button>
+                        <button type="button" class="btn btn-primary" id="cm-save-btn" onclick="commentReplySave()">
+                            <i class="fa-solid fa-floppy-disk"></i>保存配置
+                        </button>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-body ai-status-grid">
+                        <div class="ai-status-item">
+                            <span class="ai-status-label">运行状态</span>
+                            <strong id="cm-status-plugin" class="ai-status-value">检查中…</strong>
+                            <span id="cm-status-plugin-hint" class="field-hint">插件是否已加载</span>
+                        </div>
+                        <div class="ai-status-item">
+                            <span class="ai-status-label">大模型</span>
+                            <strong id="cm-status-llm" class="ai-status-value">—</strong>
+                            <span id="cm-status-model" class="field-hint">未填写模型</span>
+                        </div>
+                        <div class="ai-status-item">
+                            <span class="ai-status-label">今日回复</span>
+                            <strong id="cm-status-today" class="ai-status-value">0</strong>
+                            <span id="cm-status-today-hint" class="field-hint">上限 100 条</span>
+                        </div>
+                        <div class="ai-status-item">
+                            <span class="ai-status-label">累计成功 / 失败</span>
+                            <strong id="cm-status-total" class="ai-status-value">0 / 0</strong>
+                            <span id="cm-status-scan" class="field-hint">尚未扫描</span>
+                        </div>
+                    </div>
+                </div>
+
+                <p id="cm-reply-alert" class="field-hint ai-alert hidden"></p>
+
+                <div class="ai-layout">
+                    <div class="card">
+                        <div class="card-head">
+                            <div>
+                                <h3 class="card-title"><i class="fa-solid fa-brain"></i>大模型设置</h3>
+                                <p class="card-sub">留空 api_key / base_url 时自动复用「AI 自动回复」页已保存的接口配置</p>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="form-grid">
+                                <div class="field span-2">
+                                    <label class="field-label" for="cm-llm-base">接口地址（base_url）</label>
+                                    <input type="text" id="cm-llm-base" class="input"
+                                           placeholder="https://api.deepseek.com/v1" autocomplete="off">
+                                    <p class="field-hint">填到 /v1 即可，插件会自动拼接 /chat/completions</p>
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="cm-llm-model">模型</label>
+                                    <input type="text" id="cm-llm-model" class="input"
+                                           placeholder="deepseek-chat" autocomplete="off">
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="cm-llm-key">API Key</label>
+                                    <input type="password" id="cm-llm-key" class="input"
+                                           placeholder="sk-..." autocomplete="new-password">
+                                    <p class="field-hint" id="cm-llm-key-hint">保存在本地 config.json，不会提交到仓库</p>
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="cm-llm-temp">温度（0-2）</label>
+                                    <input type="number" id="cm-llm-temp" class="input" min="0" max="2" step="0.1" value="0.7">
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="cm-llm-maxtok">最大输出 tokens</label>
+                                    <input type="number" id="cm-llm-maxtok" class="input" min="16" max="8192" step="1" value="300">
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="cm-llm-timeout">请求超时（秒）</label>
+                                    <input type="number" id="cm-llm-timeout" class="input" min="5" max="300" step="5" value="45">
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="cm-llm-maxchars">回复字数上限</label>
+                                    <input type="number" id="cm-llm-maxchars" class="input" min="10" max="1000" step="10" value="150">
+                                </div>
+                                <div class="field span-2">
+                                    <label class="field-label" for="cm-llm-prompt">人设 / 系统提示词</label>
+                                    <textarea id="cm-llm-prompt" class="textarea" rows="4"
+                                              placeholder="描述你的身份、语气与不能说的话"></textarea>
+                                </div>
+                            </div>
+                            <div class="ai-inline-result">
+                                <span id="cm-test-result" class="field-hint"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-head">
+                            <div>
+                                <h3 class="card-title"><i class="fa-solid fa-sliders"></i>回复策略</h3>
+                                <p class="card-sub">控制扫描频率、回复哪些评论，以及是否真的发送</p>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="ai-switch-row">
+                                <div>
+                                    <strong>开启评论自动回复</strong>
+                                    <p class="field-hint">关闭后只保留 !comment_scan / !comment_status 命令</p>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="cm-reply-enabled">
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+                            <div class="ai-switch-row">
+                                <div>
+                                    <strong>预览模式（dry_run）</strong>
+                                    <p class="field-hint">只生成并记录，不真正发评论，建议先观察一段时间</p>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="cm-reply-dryrun" checked>
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+                            <div class="ai-switch-row">
+                                <div>
+                                    <strong>只回复 @UP 或命中关键词的评论</strong>
+                                    <p class="field-hint">开启后普通评论不再回复，降低打扰与风控风险</p>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="cm-reply-onlymention">
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+                            <div class="ai-switch-row">
+                                <div>
+                                    <strong>首次扫描也回复历史评论</strong>
+                                    <p class="field-hint">默认关闭：第一次扫描只记录基线，避免把旧评论全部回一遍</p>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="cm-reply-firstscan">
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+                            <div class="ai-switch-row">
+                                <div>
+                                    <strong>回复时 @ 评论者昵称</strong>
+                                    <p class="field-hint">在回复正文前加上 @昵称，便于对方收到提醒</p>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="cm-reply-prefixat">
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+
+                            <div class="form-grid mt-4">
+                                <div class="field">
+                                    <label class="field-label" for="cm-reply-interval">扫描间隔（秒）</label>
+                                    <input type="number" id="cm-reply-interval" class="input" min="30" max="3600" step="10" value="120">
+                                    <p class="field-hint">建议 ≥ 120 秒，避免频繁请求被风控</p>
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="cm-reply-sendinterval">发送间隔（秒）</label>
+                                    <input type="number" id="cm-reply-sendinterval" class="input" min="0" max="300" step="1" value="8">
+                                    <p class="field-hint">两条评论之间的等待时间</p>
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="cm-reply-cooldown">同一用户冷却（秒）</label>
+                                    <input type="number" id="cm-reply-cooldown" class="input" min="0" max="86400" step="30" value="60">
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="cm-reply-daily">每日回复上限</label>
+                                    <input type="number" id="cm-reply-daily" class="input" min="0" max="100000" step="10" value="100">
+                                    <p class="field-hint">0 表示不限制</p>
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="cm-reply-perscan">单次扫描最多回复</label>
+                                    <input type="number" id="cm-reply-perscan" class="input" min="0" max="200" step="1" value="20">
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="cm-reply-pages">每区最多翻几页</label>
+                                    <input type="number" id="cm-reply-pages" class="input" min="1" max="5" step="1" value="2">
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="cm-reply-maxage">只回复多少秒内的评论</label>
+                                    <input type="number" id="cm-reply-maxage" class="input" min="0" max="2592000" step="3600" value="604800">
+                                    <p class="field-hint">0 表示不限时间</p>
+                                </div>
+                                <div class="field">
+                                    <label class="field-label" for="cm-reply-accounts">生效账号</label>
+                                    <input type="text" id="cm-reply-accounts" class="input"
+                                           placeholder="留空表示全部账号" autocomplete="off">
+                                </div>
+                                <div class="field span-2">
+                                    <label class="field-label" for="cm-reply-triggers">触发关键词</label>
+                                    <input type="text" id="cm-reply-triggers" class="input"
+                                           placeholder="留空表示所有评论都回复，例：咨询;求教程" autocomplete="off">
+                                </div>
+                                <div class="field span-2">
+                                    <label class="field-label" for="cm-reply-ignores">忽略关键词</label>
+                                    <input type="text" id="cm-reply-ignores" class="input"
+                                           placeholder="命中则不回复，例：广告;互关;抽奖" autocomplete="off">
+                                </div>
+                                <div class="field span-2">
+                                    <label class="field-label" for="cm-reply-ignoreuids">忽略用户 UID</label>
+                                    <input type="text" id="cm-reply-ignoreuids" class="input"
+                                           placeholder="多个 UID 用 ; 分隔" autocomplete="off">
+                                </div>
+                                <div class="field span-2">
+                                    <label class="field-label" for="cm-reply-fallback">大模型失败时的兜底回复</label>
+                                    <textarea id="cm-reply-fallback" class="textarea" rows="2"
+                                              placeholder="留空则不发送（推荐留空，避免接口故障时刷屏）"></textarea>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-head">
+                        <div>
+                            <h3 class="card-title"><i class="fa-solid fa-list-check"></i>监听的评论区</h3>
+                            <p class="card-sub">每行一个，支持 BV 号、av 号、cv 号、动态链接或完整网页链接</p>
+                        </div>
+                        <div class="row-wrap">
+                            <button type="button" class="btn btn-ghost btn-sm" onclick="commentReplySeenClear()">
+                                <i class="fa-solid fa-rotate-left"></i>重置扫描基线
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="field">
+                            <textarea id="cm-reply-videos" class="textarea" rows="6"
+                                      placeholder="BV1xx411c7mD&#10;https://www.bilibili.com/video/BV1xx411c7mD&#10;17|987654321|一条动态|主账号&#10;12|123456|某篇专栏"></textarea>
+                            <p class="field-hint">
+                                带 | 的写法为「类型|ID|标题|账号」，类型 1=视频 12=专栏 17=动态，标题与账号可省略；
+                                不带 | 时按链接自动识别类型。留空则不会扫描。
+                            </p>
+                        </div>
+                        <div class="notice mt-4">
+                            <span class="notice-icon"><i class="fa-solid fa-circle-info"></i></span>
+                            <div class="notice-body">
+                                <h3>使用提示</h3>
+                                <p>建议先用「预览模式」跑一段时间，确认回复质量后再关闭预览真正发送。</p>
+                                <p>首次扫描只记录当前评论作为基线，不会回复历史评论；重置基线后同样如此。</p>
+                                <p>插件只会回复<b>一级评论</b>，不会进入楼中楼，避免刷屏和触发风控。</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-head">
+                        <div>
+                            <h3 class="card-title"><i class="fa-solid fa-clock-rotate-left"></i>评论回复记录</h3>
+                            <p class="card-sub" id="cm-history-sub">最近 20 条</p>
+                        </div>
+                        <div class="row-wrap">
+                            <button type="button" class="btn btn-ghost btn-sm" onclick="commentReplyLoadHistory()">
+                                <i class="fa-solid fa-rotate"></i>刷新
+                            </button>
+                            <button type="button" class="btn btn-ghost btn-sm" onclick="commentReplyClearHistory()">
+                                <i class="fa-solid fa-trash"></i>清空记录
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="cm-history-list" class="ai-history">
                             <p class="field-hint">暂无记录</p>
                         </div>
                     </div>

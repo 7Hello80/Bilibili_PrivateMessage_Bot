@@ -75,6 +75,7 @@ Bilibili PrivateMessage Bot (BPMB) 是一个基于 Bilibili 私信 API 开发的
 |------|------|------|
 | 🔑 关键词自动回复 | 支持多条关键词规则，精确匹配回复 | ✅ 已实现 |
 | 🤖 AI 私信自动回复 | 接入大模型（OpenAI 兼容接口）自动回复私信，带上下文记忆、冷却与每日限额 | ✅ 已实现 |
+| 💬 AI 评论自动回复 | 定时扫描视频/动态/专栏评论区，大模型自动回复新评论，支持关键词过滤、冷却、限额与预览模式 | ✅ 已实现 |
 | @用户昵称 | 自动在回复中艾特对方 | ✅ 已实现 |
 | 🔄 自动回关 | 自动关注已关注你的用户 | ✅ 已实现 |
 | 👥 账号多开 | 同时管理多个 Bilibili 账号 | ✅ 已实现 |
@@ -181,6 +182,19 @@ sh panel.sh
 ## 🔌 插件开发
 
 [开发文档](/插件开发文档.md)
+
+### 内置插件
+
+| 插件 | 说明 |
+|------|------|
+| `bilibot_plugins_autoreply` | 关键词自动回复 |
+| `bilibot_plugins_ai_autoreply` | AI 私信自动回复（面板「AI 自动回复」） |
+| `bilibot_plugins_comment_autoreply` | AI 评论自动回复（面板「评论自动回复」，详见 [插件说明](/plugins/bilibot_plugins_comment_autoreply/README.md)） |
+| `bilibot_plugins_redeem_code` | 兑换码 |
+| `bilibot_plugins_schedule` | 定时任务 |
+| `bilibot_plugins_stats` | 运行统计 |
+
+> 评论自动回复默认 `enabled=false`、`dry_run=true`，请先在预览模式下确认回复质量，再关闭预览正式发送。
 
 ---
 

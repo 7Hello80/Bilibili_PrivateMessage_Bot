@@ -1,0 +1,13 @@
+{
+    "name": "bilibot_plugins_comment_autoreply",
+    "version": "1.0.0",
+    "description": "评论区 AI 自动回复：定时扫描视频/动态/专栏评论区，接入大模型生成回复，支持关键词过滤、冷却、每日限额、预览模式与回复记录",
+    "author": "淡意往事",
+    "type": "api",
+    "repository": "",
+    "license": "MIT",
+    "enabled": true,
+    "load_order": 11,
+    "dependencies": [],
+    "bypass_follow_check": true
+}

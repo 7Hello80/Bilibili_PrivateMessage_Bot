@@ -604,8 +604,8 @@ class Plugin(plugin_dev.APIPlugin):
                 if field not in incoming_llm:
                     continue
                 value = str(incoming_llm.get(field) or "").strip()
-                if field == "api_key" and (not value or set(value) == {"*"}):
-                    continue  # 留空/掩码表示不修改
+                if field == "api_key" and (not value or "*" in value):
+                    continue  # 留空/掩码（如 sk-xxxx****）表示不修改
                 llm[field] = value
             for field, low, high in (("temperature", 0, 2), ("max_tokens", 16, 8192),
                                      ("timeout", 5, 300), ("max_reply_chars", 10, 1000)):

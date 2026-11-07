@@ -1,0 +1,32 @@
+{
+    "llm": {
+        "base_url": "https://api.deepseek.com/v1",
+        "api_key": "",
+        "model": "deepseek-chat",
+        "temperature": 0.7,
+        "max_tokens": 300,
+        "timeout": 45,
+        "max_reply_chars": 150,
+        "system_prompt": "你是 B 站 UP 主的评论区助理，替 UP 主回复视频/动态/专栏下的评论。请用自然、真诚、口语化的中文回答，一般不超过 80 字，不要用营销腔，不要编造 UP 主没有说过的事实，也不要承诺任何无法兑现的事情。遇到争议、敏感或你无法确认的问题，就礼貌说明会让 UP 主本人来回复。只输出回复正文，不要加引号，不要解释。"
+    },
+    "comment": {
+        "enabled": false,
+        "dry_run": true,
+        "poll_interval_seconds": 120,
+        "send_interval_seconds": 8,
+        "videos": [],
+        "accounts": [],
+        "only_mention": false,
+        "trigger_keywords": [],
+        "ignore_keywords": [],
+        "ignore_uids": [],
+        "cooldown_seconds": 60,
+        "max_replies_per_day": 100,
+        "max_replies_per_scan": 20,
+        "max_pages_per_scan": 2,
+        "max_comment_age_seconds": 604800,
+        "reply_on_first_scan": false,
+        "prefix_at": false,
+        "fallback_reply": ""
+    }
+}

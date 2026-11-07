@@ -132,6 +132,7 @@ const SECTION_LABELS = {
     logs: '运行日志',
     image_bed: '图床管理',
     ai_reply: 'AI 自动回复',
+    comment_reply: '评论自动回复',
     admin: '账号设置',
     about: '关于我们'
 };
@@ -1796,6 +1797,11 @@ function showSection(sectionId) {
     // AI 自动回复：进入时刷新配置、状态与记录
     if (sectionId === 'ai_reply') {
         initAiReplyPanel();
+    }
+
+    // 评论自动回复：进入时刷新配置、状态与记录
+    if (sectionId === 'comment_reply') {
+        initCommentReplyPanel();
     }
 
     // 在移动端选择后关闭抽屉
@@ -4798,10 +4804,12 @@ function aiSetHint(id, text, state) {
     el.classList.toggle('is-error', state === 'error');
 }
 
-function aiMergeConfig(raw) {
-    const cfg = JSON.parse(JSON.stringify(AI_REPLY_DEFAULTS));
+function aiMergeConfig(raw, defaults) {
+    const base = defaults || AI_REPLY_DEFAULTS;
+    const cfg = JSON.parse(JSON.stringify(base));
     if (raw && typeof raw === 'object') {
-        ['llm', 'reply'].forEach(group => {
+        // 以 defaults 里的分组为准，兼容私信回复(reply)与评论回复(comment)两个面板
+        Object.keys(base).forEach(group => {
             if (raw[group] && typeof raw[group] === 'object') {
                 Object.keys(raw[group]).forEach(key => {
                     if (raw[group][key] !== null && raw[group][key] !== undefined) {
@@ -5129,4 +5137,444 @@ function initAiReplyPanel() {
     }
     aiReplyLoadStats();
     aiReplyLoadHistory();
+}
+
+// ================= 评论区自动回复 =================
+const CM_REPLY_PLUGIN = 'bilibot_plugins_comment_autoreply';
+const CM_REPLY_API = '/api/plugins/api/' + CM_REPLY_PLUGIN;
+
+const CM_REPLY_DEFAULTS = {
+    llm: {
+        base_url: '',
+        api_key: '',
+        model: '',
+        temperature: 0.7,
+        max_tokens: 300,
+        timeout: 45,
+        max_reply_chars: 150,
+        system_prompt: ''
+    },
+    comment: {
+        enabled: false,
+        dry_run: true,
+        poll_interval_seconds: 120,
+        send_interval_seconds: 8,
+        videos: [],
+        accounts: [],
+        only_mention: false,
+        trigger_keywords: [],
+        ignore_keywords: [],
+        ignore_uids: [],
+        cooldown_seconds: 60,
+        max_replies_per_day: 100,
+        max_replies_per_scan: 20,
+        max_pages_per_scan: 2,
+        max_comment_age_seconds: 604800,
+        reply_on_first_scan: false,
+        prefix_at: false,
+        fallback_reply: ''
+    }
+};
+
+let commentReplyConfigLoaded = false;
+
+async function commentReplyRequest(path, options) {
+    const resp = await fetch(CM_REPLY_API + path, options);
+    let data = {};
+    try {
+        data = await resp.json();
+    } catch (e) {
+        data = {};
+    }
+    if (!resp.ok || data.success === false || data.error) {
+        const msg = data.message || data.error || ('请求失败 HTTP ' + resp.status);
+        throw new Error(resp.status === 503 ? '机器人未运行，插件接口不可用（请先在控制台启动机器人）' : msg);
+    }
+    return data;
+}
+
+// 把后端规范化的评论区列表还原成易读的多行文本
+function cmVideosToText(videos) {
+    if (!Array.isArray(videos)) return '';
+    return videos.map(item => {
+        if (typeof item === 'string') return item;
+        const type = Number(item.type) || 1;
+        let oid = String(item.oid || '');
+        let head = oid;
+        if (type === 1) {
+            head = /^BV/i.test(oid) ? oid : ('av' + oid);
+        } else if (type === 12) {
+            head = /^cv/i.test(oid) ? oid : ('cv' + oid);
+        }
+        const title = String(item.title || '').trim();
+        const account = String(item.account || '').trim();
+        if (title || account) {
+            return [type, oid, title, account].join('|');
+        }
+        return head;
+    }).join('\n');
+}
+
+function commentReplyFillForm(cfg) {
+    aiSetValue('cm-llm-base', cfg.llm.base_url);
+    aiSetValue('cm-llm-model', cfg.llm.model);
+    aiSetValue('cm-llm-key', cfg.llm.api_key);
+    aiSetValue('cm-llm-temp', cfg.llm.temperature);
+    aiSetValue('cm-llm-maxtok', cfg.llm.max_tokens);
+    aiSetValue('cm-llm-timeout', cfg.llm.timeout);
+    aiSetValue('cm-llm-maxchars', cfg.llm.max_reply_chars);
+    aiSetValue('cm-llm-prompt', cfg.llm.system_prompt);
+
+    const toggle = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.checked = !!value;
+    };
+    toggle('cm-reply-enabled', cfg.comment.enabled);
+    toggle('cm-reply-dryrun', cfg.comment.dry_run);
+    toggle('cm-reply-onlymention', cfg.comment.only_mention);
+    toggle('cm-reply-firstscan', cfg.comment.reply_on_first_scan);
+    toggle('cm-reply-prefixat', cfg.comment.prefix_at);
+
+    aiSetValue('cm-reply-interval', cfg.comment.poll_interval_seconds);
+    aiSetValue('cm-reply-sendinterval', cfg.comment.send_interval_seconds);
+    aiSetValue('cm-reply-cooldown', cfg.comment.cooldown_seconds);
+    aiSetValue('cm-reply-daily', cfg.comment.max_replies_per_day);
+    aiSetValue('cm-reply-perscan', cfg.comment.max_replies_per_scan);
+    aiSetValue('cm-reply-pages', cfg.comment.max_pages_per_scan);
+    aiSetValue('cm-reply-maxage', cfg.comment.max_comment_age_seconds);
+    aiSetValue('cm-reply-accounts', (cfg.comment.accounts || []).join(';'));
+    aiSetValue('cm-reply-triggers', (cfg.comment.trigger_keywords || []).join(';'));
+    aiSetValue('cm-reply-ignores', (cfg.comment.ignore_keywords || []).join(';'));
+    aiSetValue('cm-reply-ignoreuids', (cfg.comment.ignore_uids || []).join(';'));
+    aiSetValue('cm-reply-fallback', cfg.comment.fallback_reply);
+    aiSetValue('cm-reply-videos', cmVideosToText(cfg.comment.videos));
+
+    const keyHint = document.getElementById('cm-llm-key-hint');
+    if (keyHint) {
+        const hasKey = !!(cfg.llm.api_key_set || cfg.llm.api_key);
+        keyHint.textContent = hasKey
+            ? '已配置 Key（保存在本地 config.json，不会提交到仓库；留空保存表示不修改）'
+            : '留空则自动复用「AI 自动回复」页的接口配置；本地 Ollama 等可留空';
+    }
+}
+
+function commentReplyCollect() {
+    const checked = id => {
+        const el = document.getElementById(id);
+        return !!(el && el.checked);
+    };
+    return {
+        llm: {
+            base_url: aiGetValue('cm-llm-base'),
+            model: aiGetValue('cm-llm-model'),
+            api_key: aiGetValue('cm-llm-key'),
+            temperature: aiGetNumber('cm-llm-temp', 0.7),
+            max_tokens: aiGetNumber('cm-llm-maxtok', 300),
+            timeout: aiGetNumber('cm-llm-timeout', 45),
+            max_reply_chars: aiGetNumber('cm-llm-maxchars', 150),
+            system_prompt: aiGetValue('cm-llm-prompt')
+        },
+        comment: {
+            enabled: checked('cm-reply-enabled'),
+            dry_run: checked('cm-reply-dryrun'),
+            only_mention: checked('cm-reply-onlymention'),
+            reply_on_first_scan: checked('cm-reply-firstscan'),
+            prefix_at: checked('cm-reply-prefixat'),
+            poll_interval_seconds: aiGetNumber('cm-reply-interval', 120),
+            send_interval_seconds: aiGetNumber('cm-reply-sendinterval', 8),
+            cooldown_seconds: aiGetNumber('cm-reply-cooldown', 60),
+            max_replies_per_day: aiGetNumber('cm-reply-daily', 100),
+            max_replies_per_scan: aiGetNumber('cm-reply-perscan', 20),
+            max_pages_per_scan: aiGetNumber('cm-reply-pages', 2),
+            max_comment_age_seconds: aiGetNumber('cm-reply-maxage', 604800),
+            accounts: aiSplitList(aiGetValue('cm-reply-accounts')),
+            trigger_keywords: aiSplitList(aiGetValue('cm-reply-triggers')),
+            ignore_keywords: aiSplitList(aiGetValue('cm-reply-ignores')),
+            ignore_uids: aiSplitList(aiGetValue('cm-reply-ignoreuids')),
+            fallback_reply: aiGetValue('cm-reply-fallback'),
+            videos: String(aiGetValue('cm-reply-videos') || '')
+                .split('\n')
+                .map(line => line.trim())
+                .filter(line => line && line.charAt(0) !== '#')
+        }
+    };
+}
+
+async function commentReplyLoadConfig() {
+    let raw = null;
+    try {
+        const data = await commentReplyRequest('/config');
+        raw = { llm: data.llm || {}, comment: data.comment || {} };
+    } catch (e) {
+        try {
+            const resp = await fetch('/api/plugins/config?plugin_name=' + encodeURIComponent(CM_REPLY_PLUGIN));
+            const data = await resp.json();
+            if (!data || data.success === false) {
+                throw new Error((data && data.message) || '读取失败');
+            }
+            const stored = (data.config && data.config.llm) || {};
+            const key = stored.api_key || '';
+            raw = {
+                llm: Object.assign({}, stored, { api_key: '', api_key_set: !!key }),
+                comment: (data.config && data.config.comment) || {}
+            };
+        } catch (inner) {
+            commentReplyShowAlert('读取配置失败：' + (inner.message || e.message), true);
+            return;
+        }
+    }
+    const cfg = aiMergeConfig(raw, CM_REPLY_DEFAULTS);
+    commentReplyConfigLoaded = true;
+    commentReplyFillForm(cfg);
+    commentReplyShowAlert('');
+}
+
+function commentReplyShowAlert(message, isError) {
+    const el = document.getElementById('cm-reply-alert');
+    if (!el) return;
+    if (!message) {
+        el.textContent = '';
+        el.classList.add('hidden');
+        return;
+    }
+    el.textContent = message;
+    el.classList.toggle('is-error', !!isError);
+    el.classList.remove('hidden');
+}
+
+async function commentReplySave() {
+    const btn = document.getElementById('cm-save-btn');
+    const cfg = commentReplyCollect();
+    if (btn) btn.disabled = true;
+    try {
+        const data = await commentReplyRequest('/config/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ llm: cfg.llm, comment: cfg.comment })
+        });
+        showNotification(data.message || '配置已保存', 'success');
+        if (!cfg.comment.enabled) {
+            commentReplyShowAlert('已保存：评论自动回复处于关闭状态。', false);
+        } else if (cfg.comment.dry_run) {
+            commentReplyShowAlert('已保存：当前是预览模式，只会生成记录，不会真的发评论。', false);
+        } else {
+            commentReplyShowAlert('已保存：插件会按设定间隔扫描并自动回复新评论。', false);
+        }
+        if (data.comment && data.comment.videos) {
+            aiSetValue('cm-reply-videos', cmVideosToText(data.comment.videos));
+        }
+        await commentReplyLoadStats();
+    } catch (e) {
+        showNotification('保存失败：' + e.message, 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function commentReplyTest() {
+    const btn = document.getElementById('cm-test-btn');
+    if (btn) btn.disabled = true;
+    aiSetHint('cm-test-result', '正在请求大模型…');
+    try {
+        const data = await commentReplyRequest('/ai/test', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                llm: {
+                    base_url: aiGetValue('cm-llm-base'),
+                    model: aiGetValue('cm-llm-model'),
+                    api_key: aiGetValue('cm-llm-key'),
+                    timeout: aiGetNumber('cm-llm-timeout', 45)
+                }
+            })
+        });
+        aiSetHint('cm-test-result',
+            '连接成功 · ' + (data.model || '') + ' · ' + (data.latency_ms || 0) + 'ms：' + (data.text || ''),
+            'ok');
+        showNotification('大模型连接成功', 'success');
+    } catch (e) {
+        aiSetHint('cm-test-result', '连接失败：' + e.message, 'error');
+        showNotification('连接失败：' + e.message, 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function commentReplyScan() {
+    const btn = document.getElementById('cm-scan-btn');
+    if (btn) btn.disabled = true;
+    try {
+        const data = await commentReplyRequest('/scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        showNotification(data.message || '已开始扫描', 'success');
+        commentReplyShowAlert('正在扫描评论区，稍后可在下方「评论回复记录」中查看结果。', false);
+        setTimeout(() => {
+            commentReplyLoadStats();
+            commentReplyLoadHistory();
+        }, 4000);
+    } catch (e) {
+        showNotification('扫描失败：' + e.message, 'error');
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function commentReplySeenClear() {
+    if (!window.confirm('确定重置扫描基线吗？下次扫描只会记录当前评论，不会回复历史评论。')) return;
+    try {
+        const data = await commentReplyRequest('/seen/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        showNotification(data.message || '已重置基线', 'success');
+        await commentReplyLoadStats();
+    } catch (e) {
+        showNotification('操作失败：' + e.message, 'error');
+    }
+}
+
+function commentReplyRenderStats(stats) {
+    const pluginEl = document.getElementById('cm-status-plugin');
+    if (pluginEl) {
+        const running = stats && stats.worker_alive;
+        pluginEl.textContent = running ? '运行中' : '未就绪';
+        pluginEl.className = 'ai-status-value ' + (running ? 'is-ok' : 'is-off');
+    }
+    const pluginHint = document.getElementById('cm-status-plugin-hint');
+    if (pluginHint) {
+        if (!stats) {
+            pluginHint.textContent = '插件未加载';
+        } else if (!stats.enabled) {
+            pluginHint.textContent = '自动回复已关闭';
+        } else if (stats.dry_run) {
+            pluginHint.textContent = '预览模式：只记录不发送';
+        } else if (stats.scanning) {
+            pluginHint.textContent = '正在扫描中…';
+        } else if (stats.next_scan_in > 0) {
+            pluginHint.textContent = '约 ' + stats.next_scan_in + ' 秒后再次扫描';
+        } else {
+            pluginHint.textContent = '自动回复已开启';
+        }
+    }
+
+    const llmEl = document.getElementById('cm-status-llm');
+    if (llmEl) {
+        const ready = stats && stats.llm_ready;
+        llmEl.textContent = ready ? '已就绪' : '未配置';
+        llmEl.className = 'ai-status-value ' + (ready ? 'is-ok' : 'is-off');
+    }
+    const modelEl = document.getElementById('cm-status-model');
+    if (modelEl) modelEl.textContent = (stats && stats.model) || '未填写模型';
+
+    const todayEl = document.getElementById('cm-status-today');
+    if (todayEl) todayEl.textContent = (stats && stats.replies_today) || 0;
+    const todayHint = document.getElementById('cm-status-today-hint');
+    if (todayHint) {
+        todayHint.textContent = '上限 ' + ((stats && stats.max_replies_per_day) || 0) + ' 条/天';
+    }
+
+    const totalEl = document.getElementById('cm-status-total');
+    if (totalEl) {
+        totalEl.textContent = ((stats && stats.replies_sent) || 0) + ' / ' + ((stats && stats.failed) || 0);
+    }
+    const scanEl = document.getElementById('cm-status-scan');
+    if (scanEl) {
+        const q = (stats && stats.queue_size) || 0;
+        const last = (stats && stats.last_scan_time) || '';
+        const parts = [];
+        if (last) parts.push('上次 ' + last);
+        if (q > 0) parts.push('排队 ' + q + ' 条');
+        parts.push('评论区 ' + ((stats && stats.videos) || 0) + ' 个');
+        scanEl.textContent = parts.join(' · ');
+    }
+}
+
+async function commentReplyLoadStats() {
+    try {
+        const data = await commentReplyRequest('/stats');
+        commentReplyRenderStats(data.stats || {});
+    } catch (e) {
+        const pluginEl = document.getElementById('cm-status-plugin');
+        if (pluginEl) {
+            pluginEl.textContent = '不可用';
+            pluginEl.className = 'ai-status-value is-idle';
+        }
+        aiSetHint('cm-status-plugin-hint', e.message || '机器人未运行');
+    }
+}
+
+async function commentReplyLoadHistory() {
+    const list = document.getElementById('cm-history-list');
+    const sub = document.getElementById('cm-history-sub');
+    if (!list || !commentReplyConfigLoaded) return;
+    try {
+        const data = await commentReplyRequest('/history?limit=20');
+        const items = data.items || [];
+        if (sub) sub.textContent = items.length ? ('最近 ' + items.length + ' 条记录') : '暂无记录';
+        if (!items.length) {
+            list.innerHTML = '<p class="field-hint">暂无记录。扫描并生成回复后会显示在这里。</p>';
+            return;
+        }
+        const typeName = t => (Number(t) === 12 ? '专栏' : (Number(t) === 17 ? '动态' : '视频'));
+        list.innerHTML = items.map(item => {
+            const note = String(item.note || '');
+            const isError = !item.ok;
+            const isDry = note === 'dry_run';
+            const tagClass = isError ? 'is-error' : (isDry ? 'is-dry' : 'is-ok');
+            const tagText = isError ? '失败' : (isDry ? '预览' : '已发送');
+            const itemClass = isError ? 'is-error' : (isDry ? 'is-dry' : '');
+            const who = item.uname ? (item.uname + '（UID ' + item.mid + '）') : ('UID ' + (item.mid || ''));
+            const target = (item.title || '') + ' · ' + typeName(item.type) + ' ' + (item.oid || '');
+            const noteHtml = isError && note ? '<div class="ai-history-note">' + aiEscape(note) + '</div>' : '';
+            return `
+            <div class="ai-history-item ${itemClass}">
+                <div class="ai-history-head">
+                    <span class="ai-history-tag ${tagClass}">${tagText}</span>
+                    <span>${aiEscape(who)}</span>
+                    ${item.model ? '<span>' + aiEscape(item.model) + '</span>' : ''}
+                    ${item.latency_ms ? '<span>' + aiEscape(item.latency_ms + 'ms') + '</span>' : ''}
+                    <span style="margin-left:auto">${aiEscape(item.time || '')}</span>
+                </div>
+                <div class="ai-history-head" style="margin-bottom:4px">
+                    <span>${aiEscape(target)}</span>
+                    <span>评论 ${aiEscape(item.rpid || '')}</span>
+                </div>
+                <div class="ai-history-q">${aiEscape(item.question || '')}</div>
+                ${item.answer ? '<div class="ai-history-a">' + aiEscape(item.answer) + '</div>' : ''}
+                ${noteHtml}
+            </div>`;
+        }).join('');
+    } catch (e) {
+        if (sub) sub.textContent = '读取失败';
+        list.innerHTML = '<p class="field-hint">' + aiEscape(e.message) + '</p>';
+    }
+}
+
+async function commentReplyClearHistory() {
+    if (!window.confirm('确定清空评论回复记录与统计数据吗？')) return;
+    try {
+        const data = await commentReplyRequest('/history/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        showNotification(data.message || '记录已清空', 'success');
+        await commentReplyLoadHistory();
+        await commentReplyLoadStats();
+    } catch (e) {
+        showNotification('操作失败：' + e.message, 'error');
+    }
+}
+
+function initCommentReplyPanel() {
+    if (!commentReplyConfigLoaded) {
+        commentReplyLoadConfig().then(() => commentReplyLoadHistory());
+    } else {
+        commentReplyLoadHistory();
+    }
+    commentReplyLoadStats();
 }
