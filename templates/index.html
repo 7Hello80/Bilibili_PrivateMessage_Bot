@@ -1228,6 +1228,31 @@
                 <div class="card">
                     <div class="card-head">
                         <div>
+                            <h3 class="card-title"><i class="fa-solid fa-terminal"></i>扫描日志</h3>
+                            <p class="card-sub" id="cm-logs-sub">最近 200 条扫描与发送记录</p>
+                        </div>
+                        <div class="row-wrap">
+                            <button type="button" class="btn btn-ghost btn-sm" onclick="commentReplyLoadLogs()">
+                                <i class="fa-solid fa-rotate"></i>刷新
+                            </button>
+                            <button type="button" class="btn btn-ghost btn-sm" onclick="commentReplyClearLogs()">
+                                <i class="fa-solid fa-trash"></i>清空日志
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="cm-logs-list" class="ai-history">
+                            <p class="field-hint">暂无日志。扫描后会在这里显示抓取、入队、跳过与发送结果。</p>
+                        </div>
+                        <p class="field-hint mt-4">
+                            面板仅保留最近 500 条日志，重启机器人后清空；完整日志请查看插件目录下的 plugin.log。
+                        </p>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-head">
+                        <div>
                             <h3 class="card-title"><i class="fa-solid fa-clock-rotate-left"></i>评论回复记录</h3>
                             <p class="card-sub" id="cm-history-sub">最近 20 条</p>
                         </div>

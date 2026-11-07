@@ -24,6 +24,7 @@ API 文档来自 bilibili-API-collect：
 
 面板访问前缀: /api/plugins/api/bilibot_plugins_comment_autoreply
 """
+import collections
 import json
 import os
 import queue
@@ -124,7 +125,7 @@ class CommentError(Exception):
 class Plugin(plugin_dev.APIPlugin):
     def __init__(self, bot_manager=None, config_manager=None, plugin_config=None):
         super().__init__(bot_manager, config_manager, plugin_config)
-        self.version = "1.1.0"
+        self.version = "1.2.0"
 
         self._stats = {
             "ai_calls": 0,
@@ -150,6 +151,9 @@ class Plugin(plugin_dev.APIPlugin):
         self._lock = threading.Lock()
         self._video_cache = {}
         self._ai_fallback_cache = (0, {})
+        # 扫描日志（内存滚动保存，供面板「扫描日志」展示排查漏回复问题）
+        self._scan_logs = collections.deque(maxlen=500)
+        self._scan_log_lock = threading.Lock()
 
         # 已处理的评论（基线 + 已回复/已跳过），防止重复处理
         self.database.create_table("comment_seen", {
@@ -192,6 +196,8 @@ class Plugin(plugin_dev.APIPlugin):
         self.register_api_route("/history/clear", self.api_history_clear, methods=["POST"])
         self.register_api_route("/scan", self.api_scan, methods=["POST"])
         self.register_api_route("/seen/clear", self.api_seen_clear, methods=["POST"])
+        self.register_api_route("/logs", self.api_logs)
+        self.register_api_route("/logs/clear", self.api_logs_clear, methods=["POST"])
 
         self.register_metric("replies_sent", lambda: self._stats["replies_sent"])
         self.register_metric("failed", lambda: self._stats["failed"])
@@ -752,7 +758,7 @@ class Plugin(plugin_dev.APIPlugin):
 
     def _scan_once(self, force=False):
         if not self._scan_lock.acquire(blocking=False):
-            self.logger.info("已有评论扫描正在进行，跳过本次")
+            self._log_scan("info", "已有评论扫描正在进行，跳过本次")
             return False
         started = time.time()
         try:
@@ -765,16 +771,22 @@ class Plugin(plugin_dev.APIPlugin):
             if not videos and not feed_enabled:
                 if force:
                     self._last_error = "尚未配置任何评论区，也未开启评论消息扫描"
+                    self._log_scan("warning", self._last_error)
                 return False
+            self._log_scan(
+                "info", "开始扫描（%s）：评论区 %s 个，评论消息=%s，dry_run=%s" % (
+                    "手动" if force else "定时", len(videos),
+                    "开" if feed_enabled else "关",
+                    "开" if self._bool(cfg.get("dry_run")) else "关"))
             if feed_enabled:
                 try:
                     self._scan_message_feed(cfg)
                 except CommentError as e:
                     self._last_error = str(e)
-                    self.logger.error("扫描评论消息失败: %s" % e)
+                    self._log_scan("error", "扫描评论消息失败: %s" % e)
                 except Exception as e:
                     self._last_error = str(e)
-                    self.logger.error("扫描评论消息异常: %s" % e)
+                    self._log_scan("error", "扫描评论消息异常: %s" % e)
             for video in videos:
                 if self._stop.is_set():
                     break
@@ -782,15 +794,20 @@ class Plugin(plugin_dev.APIPlugin):
                     self._scan_video(cfg, video)
                 except CommentError as e:
                     self._last_error = str(e)
-                    self.logger.error("扫描评论区 %s:%s 失败: %s" % (
+                    self._log_scan("error", "扫描评论区 %s:%s 失败: %s" % (
                         video.get("type"), video.get("oid"), e))
                 except Exception as e:
                     self._last_error = str(e)
-                    self.logger.error("扫描评论区 %s:%s 异常: %s" % (
+                    self._log_scan("error", "扫描评论区 %s:%s 异常: %s" % (
                         video.get("type"), video.get("oid"), e))
                 self._stop.wait(1)
             self._last_scan_at = time.time()
             self._last_scan_duration = int((self._last_scan_at - started) * 1000)
+            self._log_scan(
+                "info", "扫描结束：用时 %ss，扫描 %s 条，入队 %s 条，累计今日回复 %s 条" % (
+                    round(self._last_scan_duration / 1000.0, 1),
+                    self._stats["scanned"], self._stats["queued"],
+                    self._replies_today()))
             return True
         finally:
             self._scan_lock.release()
@@ -839,6 +856,8 @@ class Plugin(plugin_dev.APIPlugin):
                 self._stop.wait(1)
 
         comments.sort(key=lambda row: (row.get("ctime") or 0, row.get("rpid") or ""))
+        self._log_scan("info", "评论区 %s：本轮抓取 %s 条评论" % (
+            video.get("title") or vkey, len(comments)))
 
         state = self.database.fetch_one(
             "SELECT baseline_at FROM comment_scan_state WHERE key = ?", (vkey,))
@@ -876,7 +895,8 @@ class Plugin(plugin_dev.APIPlugin):
                 reason = "达到单次扫描上限"
             if reason:
                 self._stats["skipped"] += 1
-                self.logger.debug("跳过评论 %s: %s" % (row["rpid"], reason))
+                self._log_scan("info", "跳过评论区评论 %s（%s）: %s" % (
+                    row["rpid"], row.get("uname") or row.get("mid") or "未知用户", reason))
                 continue
 
             job = {
@@ -895,19 +915,22 @@ class Plugin(plugin_dev.APIPlugin):
                 self._queue.put_nowait(job)
             except queue.Full:
                 self._stats["skipped"] += 1
-                self.logger.warning("评论回复队列已满，丢弃评论 %s" % row["rpid"])
+                self._log_scan("warning", "评论回复队列已满，丢弃评论 %s" % row["rpid"])
                 break
             self._stats["queued"] += 1
             self._touch_cooldown(row["mid"])
             budget -= 1
             queued += 1
+            self._log_scan("info", "评论入队 %s（%s）: %s" % (
+                row["rpid"], row.get("uname") or row.get("mid") or "未知用户",
+                str(row.get("content") or "")[:60]))
 
         self.database.execute(
             "INSERT OR REPLACE INTO comment_scan_state "
             "(key, baseline_at, last_scan_at) VALUES (?, ?, ?)",
             (vkey, state[0] if state else 0, now))
         if queued:
-            self.logger.info("评论区 %s：发现 %s 条待回复评论" % (
+            self._log_scan("info", "评论区 %s：发现 %s 条待回复评论" % (
                 video.get("title") or vkey, queued))
 
     def _fetch_comments(self, bot, video, pn, ps, sort=0):
@@ -1002,10 +1025,16 @@ class Plugin(plugin_dev.APIPlugin):
 
         uid = str(getattr(bot, "self_uid", "") or getattr(bot, "account_name", ""))
         vkey = "msgfeed:%s" % uid
+        self._log_scan("info", "账号 %s：评论消息接口返回 %s 条通知" % (
+            getattr(bot, "account_name", uid), len(raw_items)))
         rows = []
         for raw in raw_items:
             row = self._msgfeed_row(raw)
             if not row:
+                extra = (raw.get("item") or {}) if isinstance(raw, dict) else {}
+                self._log_scan("warning",
+                               "评论消息解析失败（缺 rpid/内容/oid），已忽略: %s" % (
+                                   str(extra.get("source_id") or raw.get("id") or "未知")[:40]))
                 continue
             if row.get("type") == 1 and str(row.get("oid") or "").upper().startswith("BV"):
                 try:
@@ -1016,14 +1045,62 @@ class Plugin(plugin_dev.APIPlugin):
                         "title": row.get("title") or "",
                     })
                 except CommentError as e:
-                    self.logger.warning("评论消息中的视频 %s 解析失败: %s" % (
-                        row.get("oid"), e))
-                    continue
-                row["oid"] = str(resolved.get("oid") or row["oid"])
-                row["bvid"] = resolved.get("bvid") or row.get("bvid") or ""
-                row["title"] = row.get("title") or resolved.get("title") or ""
+                    # 视频信息接口可能因为稿件不可见/审核中而失败，但通知里通常带有 aid
+                    # （subject_id）。只要还能拿到 aid，就继续入队，避免漏掉 @我/回复我。
+                    fallback = str(row.get("subject_id") or "").strip()
+                    if fallback.upper().startswith("BV"):
+                        try:
+                            resolved = self._resolve_video(bot, {
+                                "type": 1, "oid": fallback, "bvid": fallback,
+                                "title": row.get("title") or "",
+                            })
+                        except CommentError:
+                            resolved = None
+                        if resolved:
+                            row["oid"] = str(resolved.get("oid") or fallback)
+                            row["bvid"] = resolved.get("bvid") or fallback
+                            row["title"] = row.get("title") or resolved.get("title") or ""
+                            self._log_scan(
+                                "warning",
+                                "评论消息中的视频 %s 解析失败，改用通知里的 subject_id=%s "
+                                "重新解析成功（rpid=%s）" % (
+                                    row.get("oid"), fallback, row.get("rpid")))
+                            fallback = ""
+                    if fallback.isdigit():
+                        self._log_scan(
+                            "warning",
+                            "评论消息中的视频 %s 解析失败，改用通知里的 subject_id=%s "
+                            "作为 aid 继续处理（rpid=%s）：%s" % (
+                                row.get("oid"), fallback, row.get("rpid"), e))
+                        row["oid"] = fallback
+                        row["bvid"] = row.get("bvid") or ""
+                        row["title"] = row.get("title") or ("视频 av%s" % fallback)
+                    elif fallback:
+                        self._log_scan(
+                            "warning",
+                            "评论消息中的视频 %s 解析失败，且通知里的 subject_id=%s "
+                            "也无法使用，已跳过 rpid=%s：%s" % (
+                                row.get("oid"), fallback, row.get("rpid"), e))
+                        continue
+                    else:
+                        self._log_scan(
+                            "warning",
+                            "评论消息中的视频 %s 解析失败，且通知里没有可用的 aid，"
+                            "已跳过 rpid=%s：%s" % (
+                                row.get("oid"), row.get("rpid"), e))
+                        continue
+                else:
+                    row["oid"] = str(resolved.get("oid") or row["oid"])
+                    row["bvid"] = resolved.get("bvid") or row.get("bvid") or ""
+                    row["title"] = row.get("title") or resolved.get("title") or ""
             if self._seen_any(row["rpid"]):
+                self._log_scan("info", "评论消息 %s 之前已处理过，跳过" % row["rpid"])
                 continue
+            self._log_scan("info", "收到评论消息 rpid=%s：%s 在「%s」%s: %s" % (
+                row["rpid"], row.get("uname") or row.get("mid") or "未知用户",
+                (row.get("title") or "")[:30],
+                COMMENT_TYPE_NAMES.get(self._to_int(row.get("type"), 1), "视频"),
+                str(row.get("content") or "")[:60]))
             rows.append(row)
 
         rows.sort(key=lambda row: (row.get("ctime") or 0, row.get("rpid") or ""))
@@ -1038,9 +1115,9 @@ class Plugin(plugin_dev.APIPlugin):
                 "(key, baseline_at, last_scan_at) VALUES (?, ?, ?)",
                 (vkey, now, now))
             self._stats["baseline"] += len(rows)
-            self.logger.info(
-                "账号 %s 首次扫描评论消息，已记录基线 %s 条（不回复历史消息）" % (
-                    getattr(bot, "account_name", uid), len(rows)))
+            self._log_scan("info",
+                           "账号 %s 首次扫描评论消息，已记录基线 %s 条（不回复历史消息）" % (
+                               getattr(bot, "account_name", uid), len(rows)))
             return
 
         if state is None:
@@ -1063,7 +1140,8 @@ class Plugin(plugin_dev.APIPlugin):
                 reason = "达到单次扫描上限"
             if reason:
                 self._stats["skipped"] += 1
-                self.logger.debug("跳过评论消息 %s: %s" % (row["rpid"], reason))
+                self._log_scan("info", "跳过评论消息 %s（%s）: %s" % (
+                    row["rpid"], row.get("uname") or row.get("mid") or "未知用户", reason))
                 continue
 
             job = {
@@ -1085,19 +1163,21 @@ class Plugin(plugin_dev.APIPlugin):
                 self._queue.put_nowait(job)
             except queue.Full:
                 self._stats["skipped"] += 1
-                self.logger.warning("评论回复队列已满，丢弃评论消息 %s" % row["rpid"])
+                self._log_scan("warning", "评论回复队列已满，丢弃评论消息 %s" % row["rpid"])
                 break
             self._stats["queued"] += 1
             self._touch_cooldown(row["mid"])
             budget -= 1
             queued += 1
+            self._log_scan("info", "评论消息已入队 %s: %s" % (
+                row["rpid"], str(row.get("content") or "")[:60]))
 
         self.database.execute(
             "INSERT OR REPLACE INTO comment_scan_state "
             "(key, baseline_at, last_scan_at) VALUES (?, ?, ?)",
             (vkey, state[0] if state else 0, now))
         if queued:
-            self.logger.info("账号 %s：从评论消息发现 %s 条待回复评论" % (
+            self._log_scan("info", "账号 %s：从评论消息发现 %s 条待回复评论" % (
                 getattr(bot, "account_name", uid), queued))
 
     @classmethod
@@ -1135,6 +1215,8 @@ class Plugin(plugin_dev.APIPlugin):
             "root_rpid": root_rpid,
             "parent_rpid": source_id,
             "notice_id": str(raw.get("id") or "").strip(),
+            # 视频通知里的 subject_id 通常是 aid：BV 解析失败时用它兜底
+            "subject_id": str(item.get("subject_id") or "").strip(),
         }
 
     @classmethod
@@ -1292,6 +1374,38 @@ class Plugin(plugin_dev.APIPlugin):
         except Exception as e:
             self.logger.error("清理评论插件数据失败: %s" % e)
 
+    # ---------- 扫描日志 ----------
+
+    def _log_scan(self, level, message):
+        """记录一条扫描日志：同时写入插件日志文件与面板内存缓冲
+
+        面板「扫描日志」只展示最近 500 条，插件日志仍然完整落盘。
+        """
+        message = str(message or "").strip()
+        if not message:
+            return
+        text = time.strftime("%H:%M:%S") + " " + message
+        with self._scan_log_lock:
+            self._scan_logs.append({
+                "time": text,
+                "level": level,
+                "message": message,
+            })
+        log = {"info": self.logger.info, "warning": self.logger.warning,
+               "error": self.logger.error}.get(level, self.logger.info)
+        log(message)
+
+    def api_logs(self, data):
+        limit = max(1, min(500, self._to_int(self._p(data, "limit"), 200)))
+        with self._scan_log_lock:
+            items = list(self._scan_logs)[-limit:]
+        return {"success": True, "items": items}
+
+    def api_logs_clear(self, data):
+        with self._scan_log_lock:
+            self._scan_logs.clear()
+        return {"success": True, "message": "扫描日志已清空"}
+
     def _cooldown_left(self, mid, cfg):
         if not mid:
             return 0
@@ -1349,12 +1463,17 @@ class Plugin(plugin_dev.APIPlugin):
                 continue
             if job is None:
                 break
+            self._log_scan("info", "开始处理评论 %s（来源：%s，目标：%s:%s）" % (
+                job.get("rpid"), "评论消息" if job.get("source") == "message" else "评论区",
+                job.get("type"), job.get("oid")))
             try:
                 self._process_job(job)
             except Exception as e:
                 self._stats["failed"] += 1
                 self._last_error = str(e)
                 self.logger.error("评论回复任务异常: %s" % e)
+                self._log_scan("error", "评论回复任务 %s 异常: %s" % (
+                    job.get("rpid"), str(e)[:200]))
 
     def _process_rule_job(self, job, cfg, rule):
         """命中关键词规则：直接使用固定回复内容，不调用大模型"""
@@ -1365,6 +1484,7 @@ class Plugin(plugin_dev.APIPlugin):
             self._stats["failed"] += 1
             self._last_error = "关键词规则回复内容为空"
             self._log_reply(job, "", "keyword", latency, 0, "empty_keyword_reply")
+            self._log_scan("warning", "关键词规则回复内容为空，跳过评论 %s" % job.get("rpid"))
             return
 
         if self._bool(cfg.get("dry_run")):
@@ -1372,6 +1492,8 @@ class Plugin(plugin_dev.APIPlugin):
             self._stats["keyword_replies"] += 1
             self._log_reply(job, text, "keyword", latency, 1, "keyword_dry_run")
             self.logger.info("[dry-run] 关键词规则命中评论 %s，将回复: %s" % (
+                job.get("rpid"), text[:80]))
+            self._log_scan("info", "[dry-run] 关键词规则将回复评论 %s: %s" % (
                 job.get("rpid"), text[:80]))
             return
 
@@ -1383,9 +1505,13 @@ class Plugin(plugin_dev.APIPlugin):
             self._cooldown[str(job.get("mid") or "")] = time.time()
             self.logger.info("关键词规则已回复评论 %s: %s" % (
                 job.get("rpid"), text[:80]))
+            self._log_scan("info", "关键词规则已回复评论 %s: %s" % (
+                job.get("rpid"), text[:80]))
         else:
             self._stats["failed"] += 1
             self._log_reply(job, text, "keyword", latency, 0, note)
+            self._log_scan("error", "关键词规则回复评论 %s 失败: %s" % (
+                job.get("rpid"), note))
 
     def _process_job(self, job):
         cfg = self._comment_cfg()
@@ -1420,6 +1546,8 @@ class Plugin(plugin_dev.APIPlugin):
             self._stats["failed"] += 1
             self._last_error = str(e)
             self.logger.error("评论大模型调用失败: %s" % e)
+            self._log_scan("error", "评论 %s 大模型调用失败: %s" % (
+                job.get("rpid"), str(e)[:200]))
             fallback = str(cfg.get("fallback_reply") or "").strip()
             self._log_reply(job, fallback, "", int((time.time() - started) * 1000),
                             0, "error: %s" % str(e)[:200])
@@ -1427,8 +1555,11 @@ class Plugin(plugin_dev.APIPlugin):
                 ok, note = self._send_reply(job, fallback)
                 if ok:
                     self._stats["replies_sent"] += 1
+                    self._log_scan("info", "评论 %s 使用兜底回复发送成功" % job.get("rpid"))
                 else:
                     self._stats["failed"] += 1
+                    self._log_scan("error", "评论 %s 兜底回复发送失败: %s" % (
+                        job.get("rpid"), note))
                 self._log_reply(job, fallback, "", int((time.time() - started) * 1000),
                                 1 if ok else 0, "fallback_" + note)
             return
@@ -1440,6 +1571,8 @@ class Plugin(plugin_dev.APIPlugin):
             self._stats["skipped"] += 1
             self._log_reply(job, text, model, latency, 1, "dry_run")
             self.logger.info("[dry-run] 将回复评论 %s: %s" % (job.get("rpid"), text[:80]))
+            self._log_scan("info", "[dry-run] 将回复评论 %s: %s" % (
+                job.get("rpid"), text[:80]))
             return
 
         ok, note = self._send_reply(job, text)
@@ -1449,9 +1582,12 @@ class Plugin(plugin_dev.APIPlugin):
             self._cooldown[str(job.get("mid") or "")] = time.time()
             self.logger.info("已回复评论 %s（%sms）: %s" % (
                 job.get("rpid"), latency, text[:80]))
+            self._log_scan("info", "已回复评论 %s（%sms）: %s" % (
+                job.get("rpid"), latency, text[:80]))
         else:
             self._stats["failed"] += 1
             self._log_reply(job, text, model, latency, 0, note)
+            self._log_scan("error", "回复评论 %s 失败: %s" % (job.get("rpid"), note))
 
     def _send_reply(self, job, text):
         cfg = self._comment_cfg()

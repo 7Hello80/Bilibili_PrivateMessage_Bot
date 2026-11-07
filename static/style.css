@@ -3618,6 +3618,7 @@ body.drawer-open { overflow: hidden; }
   background: var(--surface-sunken);
 }
 .ai-history-item.is-error { border-color: #fecaca; background: #fef7f6; }
+.ai-history-item.is-warn { border-color: #fde68a; background: #fffdf3; }
 .ai-history-item.is-dry { border-color: #ddd6fe; background: #faf8ff; }
 .ai-history-head {
   display: flex;
@@ -3639,6 +3640,7 @@ body.drawer-open { overflow: hidden; }
 .ai-history-tag.is-ok { color: #047857; border-color: #d1fae5; background: #ecfdf5; }
 .ai-history-tag.is-error { color: #b91c1c; border-color: #fecaca; background: #fef2f2; }
 .ai-history-tag.is-dry { color: #6d28d9; border-color: #ddd6fe; background: #f5f3ff; }
+.ai-history-tag.is-warn { color: #b45309; border-color: #fde68a; background: #fffbeb; }
 .ai-history-q,
 .ai-history-a {
   font-size: 13px;

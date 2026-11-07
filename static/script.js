@@ -5441,9 +5441,10 @@ async function commentReplyScan() {
             body: JSON.stringify({})
         });
         showNotification(data.message || '已开始扫描', 'success');
-        commentReplyShowAlert('正在扫描评论区与评论消息，稍后可在下方「评论回复记录」中查看结果。', false);
+        commentReplyShowAlert('正在扫描评论区与评论消息，稍后可在下方「扫描日志」与「评论回复记录」中查看结果。', false);
         setTimeout(() => {
             commentReplyLoadStats();
+            commentReplyLoadLogs();
             commentReplyLoadHistory();
         }, 4000);
     } catch (e) {
@@ -5603,11 +5604,62 @@ async function commentReplyClearHistory() {
     }
 }
 
+async function commentReplyLoadLogs() {
+    const list = document.getElementById('cm-logs-list');
+    const sub = document.getElementById('cm-logs-sub');
+    if (!list || !commentReplyConfigLoaded) return;
+    try {
+        const data = await commentReplyRequest('/logs?limit=200');
+        const items = data.items || [];
+        if (sub) sub.textContent = items.length ? ('最近 ' + items.length + ' 条扫描与发送记录') : '暂无日志';
+        if (!items.length) {
+            list.innerHTML = '<p class="field-hint">暂无日志。扫描后会在这里显示抓取、入队、跳过与发送结果。</p>';
+            return;
+        }
+        const levelText = { info: '信息', warning: '警告', error: '错误' };
+        list.innerHTML = items.map(item => {
+            const level = String(item.level || 'info');
+            const tagClass = level === 'error' ? 'is-error' : (level === 'warning' ? 'is-warn' : 'is-ok');
+            const itemClass = level === 'error' ? 'is-error' : (level === 'warning' ? 'is-warn' : '');
+            return `
+            <div class="ai-history-item ${itemClass}">
+                <div class="ai-history-head">
+                    <span class="ai-history-tag ${tagClass}">${aiEscape(levelText[level] || level)}</span>
+                    <span style="margin-left:auto">${aiEscape(item.time || '')}</span>
+                </div>
+                <div class="ai-history-q">${aiEscape(item.message || '')}</div>
+            </div>`;
+        }).join('');
+    } catch (e) {
+        if (sub) sub.textContent = '读取失败';
+        list.innerHTML = '<p class="field-hint">' + aiEscape(e.message) + '</p>';
+    }
+}
+
+async function commentReplyClearLogs() {
+    if (!window.confirm('确定清空面板扫描日志吗？（不会影响已保存的回复记录）')) return;
+    try {
+        const data = await commentReplyRequest('/logs/clear', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+        });
+        showNotification(data.message || '日志已清空', 'success');
+        await commentReplyLoadLogs();
+    } catch (e) {
+        showNotification('操作失败：' + e.message, 'error');
+    }
+}
+
 function initCommentReplyPanel() {
     if (!commentReplyConfigLoaded) {
-        commentReplyLoadConfig().then(() => commentReplyLoadHistory());
+        commentReplyLoadConfig().then(() => {
+            commentReplyLoadHistory();
+            commentReplyLoadLogs();
+        });
     } else {
         commentReplyLoadHistory();
+        commentReplyLoadLogs();
     }
     commentReplyLoadStats();
 }
