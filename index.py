@@ -35,6 +35,9 @@ config = ConfigManage.ConfigManager("config.json")
 
 version = "1.1.5"
 
+# B 站接口返回这些错误码时说明触发了风控/限流，需要退避而不是继续轮询
+RATE_LIMIT_CODES = {-799, -509, -352, -412}
+
 # 初始化colorama
 colorama.init(autoreset=True)
 
@@ -202,6 +205,10 @@ class SimpleBilibiliReply:
         self.poll_interval = poll_interval
         self.running = False
         self.no_focus_hf = no_focus_hf
+
+        # 限流退避状态：触发风控后逐步拉长轮询间隔，避免越限越勤、越勤越限
+        self._rate_limit_backoff = 0
+        self._rate_limited_until = 0.0
         
         # 生成设备ID
         self.device_id = device_id
@@ -265,6 +272,19 @@ class SimpleBilibiliReply:
         """设置插件加载器"""
         self.plugin_loader = plugin_loader
 
+    def _enter_rate_limit_backoff(self):
+        """接口返回限流错误码时按指数退避（30s 起，最长 300s）"""
+        self._rate_limit_backoff = 30 if self._rate_limit_backoff == 0 else min(self._rate_limit_backoff * 2, 300)
+        self._rate_limited_until = time.time() + self._rate_limit_backoff
+        print(f"{Fore.YELLOW}⏳ [{self.account_name}] 触发B站接口限流，暂停请求 {self._rate_limit_backoff} 秒后重试")
+
+    def _reset_rate_limit_backoff(self):
+        """接口恢复正常后清除退避状态"""
+        if self._rate_limit_backoff:
+            print(f"{Fore.GREEN}✓ [{self.account_name}] 接口限流已解除，恢复正常轮询")
+        self._rate_limit_backoff = 0
+        self._rate_limited_until = 0.0
+
     def get_sessions(self) -> List[Dict]:
         """获取会话列表"""
         url = "https://api.vc.bilibili.com/session_svr/v1/session_svr/get_sessions"
@@ -280,9 +300,14 @@ class SimpleBilibiliReply:
             if response.status_code == 200:
                 data = response.json()
                 if data.get("code") == 0:
+                    self._reset_rate_limit_backoff()
                     return data.get("data", {}).get("session_list", [])
                 else:
-                    print(f"{Fore.RED}✗ [{self.account_name}] API错误: {data.get('message')}")
+                    code = data.get("code")
+                    if code in RATE_LIMIT_CODES:
+                        self._enter_rate_limit_backoff()
+                    else:
+                        print(f"{Fore.RED}✗ [{self.account_name}] API错误: {data.get('message')}")
         except Exception as e:
             print(f"{Fore.RED}✗ [{self.account_name}] 获取会话列表异常: {e}")
         
@@ -818,6 +843,11 @@ class SimpleBilibiliReply:
         follow_check_interval = 10
         try:
             while self.running:
+                # 处于限流退避期时直接等待，不发任何请求
+                if self._rate_limited_until > time.time():
+                    time.sleep(max(1, min(self._rate_limited_until - time.time(), 60)))
+                    continue
+
                 self.process_messages()
                 current_time = time.time()
                 if current_time - last_follow_check >= follow_check_interval:
