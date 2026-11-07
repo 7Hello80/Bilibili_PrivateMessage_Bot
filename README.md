@@ -119,15 +119,7 @@ python3 web_panel.py
 
 # Windows
 python web_panel.py
-
-# Android / Termux（推荐用脚本后台运行，避免切后台被挂起）
-sh panel.sh
 ```
-
-> **Termux 用户注意**：直接在终端前台运行后把 Termux 切到后台，进程可能被终端作业控制挂起
-> （`ps` 状态显示 `T`），此时端口不再监听，浏览器访问会一直卡住直到超时。
-> `sh panel.sh` 使用 `setsid + nohup` 让服务脱离终端运行，并提供
-> `sh panel.sh status|logs|restart|stop` 管理命令。
 
 #### 4. 访问控制面板
 
@@ -190,7 +182,6 @@ sh panel.sh
 | `bilibot_plugins_autoreply` | 关键词自动回复 |
 | `bilibot_plugins_ai_autoreply` | AI 私信自动回复（面板「AI 自动回复」） |
 | `bilibot_plugins_comment_autoreply` | AI 评论自动回复（面板「评论自动回复」，详见 [插件说明](/plugins/bilibot_plugins_comment_autoreply/README.md)） |
-| `bilibot_plugins_redeem_code` | 兑换码 |
 | `bilibot_plugins_schedule` | 定时任务 |
 | `bilibot_plugins_stats` | 运行统计 |
 
