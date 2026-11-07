@@ -2395,6 +2395,32 @@ function showLayuiAlert(message, type = 'info') {
     });
 }
 
+// 统一的确认弹窗（layer 自定义样式；layer 未加载时回退浏览器原生 confirm）
+function showConfirm(message, options = {}) {
+    return new Promise(resolve => {
+        const layerApi = (window.layui && layui.layer) || window.layer;
+        if (!layerApi || typeof layerApi.confirm !== 'function') {
+            resolve(window.confirm(message));
+            return;
+        }
+        const index = layerApi.confirm(message, {
+            icon: 3,
+            title: options.title || '确认操作',
+            btn: [options.okText || '确定', options.cancelText || '取消']
+        }, function(i) {
+            layerApi.close(i);
+            resolve(true);
+        }, function(i) {
+            layerApi.close(i);
+            resolve(false);
+        });
+        if (index === undefined) {
+            // 极端情况下 layer 初始化失败，避免 Promise 永远挂起
+            resolve(window.confirm(message));
+        }
+    });
+}
+
 function initImageBed() {
     initLayuiForm();
     loadImages();
@@ -5088,7 +5114,7 @@ async function aiReplyLoadHistory() {
 }
 
 async function aiReplyClearMemory() {
-    if (!window.confirm('确定清空所有用户与 AI 的对话上下文吗？此操作不可恢复。')) return;
+    if (!(await showConfirm('确定清空所有用户与 AI 的对话上下文吗？此操作不可恢复。', { title: '清空对话上下文' }))) return;
     try {
         const data = await aiReplyRequest('/memory/clear', {
             method: 'POST',
@@ -5102,7 +5128,7 @@ async function aiReplyClearMemory() {
 }
 
 async function aiReplyClearHistory() {
-    if (!window.confirm('确定清空回复记录与统计数据吗？')) return;
+    if (!(await showConfirm('确定清空回复记录与统计数据吗？', { title: '清空回复记录' }))) return;
     try {
         const data = await aiReplyRequest('/history/clear', {
             method: 'POST',
@@ -5426,7 +5452,7 @@ async function commentReplyScan() {
 }
 
 async function commentReplySeenClear() {
-    if (!window.confirm('确定重置扫描基线吗？下次扫描只会记录当前评论，不会回复历史评论。')) return;
+    if (!(await showConfirm('确定重置扫描基线吗？下次扫描只会记录当前评论，不会回复历史评论。', { title: '重置扫描基线' }))) return;
     try {
         const data = await commentReplyRequest('/seen/clear', {
             method: 'POST',
@@ -5560,7 +5586,7 @@ async function commentReplyLoadHistory() {
 }
 
 async function commentReplyClearHistory() {
-    if (!window.confirm('确定清空评论回复记录与统计数据吗？')) return;
+    if (!(await showConfirm('确定清空评论回复记录与统计数据吗？', { title: '清空评论回复记录' }))) return;
     try {
         const data = await commentReplyRequest('/history/clear', {
             method: 'POST',
@@ -5608,7 +5634,7 @@ async function commentReplyLoadLogs() {
 }
 
 async function commentReplyClearLogs() {
-    if (!window.confirm('确定清空面板扫描日志吗？（不会影响已保存的回复记录）')) return;
+    if (!(await showConfirm('确定清空面板扫描日志吗？（不会影响已保存的回复记录）', { title: '清空扫描日志' }))) return;
     try {
         const data = await commentReplyRequest('/logs/clear', {
             method: 'POST',
