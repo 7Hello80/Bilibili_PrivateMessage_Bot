@@ -1069,10 +1069,20 @@
                             <div class="ai-switch-row">
                                 <div>
                                     <strong>只回复 @UP 或命中关键词的评论</strong>
-                                    <p class="field-hint">开启后普通评论不再回复，降低打扰与风控风险</p>
+                                    <p class="field-hint">开启后普通评论不再回复，降低打扰与风控风险；从评论消息扫描到的 @我/回复我 不受此限制</p>
                                 </div>
                                 <label class="switch">
                                     <input type="checkbox" id="cm-reply-onlymention">
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+                            <div class="ai-switch-row">
+                                <div>
+                                    <strong>扫描评论消息（回复我的）</strong>
+                                    <p class="field-hint">不配置评论区也能用：从消息中心读取 @我 / 回复我的评论并回复，支持视频、动态与专栏</p>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="cm-reply-msgfeed">
                                     <span class="slider"></span>
                                 </label>
                             </div>
@@ -1158,6 +1168,7 @@
                                     <label class="field-label" for="cm-reply-triggers">触发关键词</label>
                                     <input type="text" id="cm-reply-triggers" class="input"
                                            placeholder="留空表示所有评论都回复，例：咨询;求教程" autocomplete="off">
+                                    <p class="field-hint">仅作用于评论区扫描；评论消息里的 @我 / 回复我 不受此限制</p>
                                 </div>
                                 <div class="field span-2">
                                     <label class="field-label" for="cm-reply-ignores">忽略关键词</label>
@@ -1197,7 +1208,7 @@
                                       placeholder="BV1xx411c7mD&#10;https://www.bilibili.com/video/BV1xx411c7mD&#10;17|987654321|一条动态|主账号&#10;12|123456|某篇专栏"></textarea>
                             <p class="field-hint">
                                 带 | 的写法为「类型|ID|标题|账号」，类型 1=视频 12=专栏 17=动态，标题与账号可省略；
-                                不带 | 时按链接自动识别类型。留空则不会扫描。
+                                不带 | 时按链接自动识别类型。留空则只扫描「评论消息（回复我的）」（需在上方开启）。
                             </p>
                         </div>
                         <div class="notice mt-4">
@@ -1206,7 +1217,8 @@
                                 <h3>使用提示</h3>
                                 <p>建议先用「预览模式」跑一段时间，确认回复质量后再关闭预览真正发送。</p>
                                 <p>首次扫描只记录当前评论作为基线，不会回复历史评论；重置基线后同样如此。</p>
-                                <p>插件只会回复<b>一级评论</b>，不会进入楼中楼，避免刷屏和触发风控。</p>
+                                <p>插件只会回复<b>一级评论</b>，不会进入楼中楼，避免刷屏和触发风控；从「评论消息」扫描到的楼中楼 @我 / 回复我 会按原有楼层回复。</p>
+                                <p>不配置任何评论区也可以使用：开启「扫描评论消息（回复我的）」，插件会定时读取消息中心的 @我 / 回复我 评论并回复。</p>
                                 <p>配置了「关键词 → 回复内容」规则时，命中的评论直接发送固定内容，不消耗大模型额度；开启「仅使用关键词规则」后，未命中的评论不回复。</p>
                             </div>
                         </div>

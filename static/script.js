@@ -5160,6 +5160,7 @@ const CM_REPLY_DEFAULTS = {
         poll_interval_seconds: 120,
         send_interval_seconds: 8,
         videos: [],
+        message_feed: false,
         accounts: [],
         only_mention: false,
         trigger_keywords: [],
@@ -5247,6 +5248,7 @@ function commentReplyFillForm(cfg) {
     toggle('cm-reply-enabled', cfg.comment.enabled);
     toggle('cm-reply-dryrun', cfg.comment.dry_run);
     toggle('cm-reply-onlymention', cfg.comment.only_mention);
+    toggle('cm-reply-msgfeed', cfg.comment.message_feed);
     toggle('cm-reply-firstscan', cfg.comment.reply_on_first_scan);
     toggle('cm-reply-prefixat', cfg.comment.prefix_at);
     toggle('cm-reply-keywordonly', cfg.comment.keyword_only);
@@ -5295,6 +5297,7 @@ function commentReplyCollect() {
             enabled: checked('cm-reply-enabled'),
             dry_run: checked('cm-reply-dryrun'),
             only_mention: checked('cm-reply-onlymention'),
+            message_feed: checked('cm-reply-msgfeed'),
             reply_on_first_scan: checked('cm-reply-firstscan'),
             prefix_at: checked('cm-reply-prefixat'),
             keyword_only: checked('cm-reply-keywordonly'),
@@ -5378,6 +5381,8 @@ async function commentReplySave() {
         showNotification(data.message || '配置已保存', 'success');
         if (!cfg.comment.enabled) {
             commentReplyShowAlert('已保存：评论自动回复处于关闭状态。', false);
+        } else if (!cfg.comment.videos.length && !cfg.comment.message_feed) {
+            commentReplyShowAlert('已保存：尚未配置评论区，也未开启评论消息扫描，插件不会扫描到任何评论。', false);
         } else if (cfg.comment.dry_run) {
             commentReplyShowAlert('已保存：当前是预览模式，只会生成记录，不会真的发评论。', false);
         } else {
@@ -5436,7 +5441,7 @@ async function commentReplyScan() {
             body: JSON.stringify({})
         });
         showNotification(data.message || '已开始扫描', 'success');
-        commentReplyShowAlert('正在扫描评论区，稍后可在下方「评论回复记录」中查看结果。', false);
+        commentReplyShowAlert('正在扫描评论区与评论消息，稍后可在下方「评论回复记录」中查看结果。', false);
         setTimeout(() => {
             commentReplyLoadStats();
             commentReplyLoadHistory();
@@ -5515,6 +5520,7 @@ function commentReplyRenderStats(stats) {
         if (last) parts.push('上次 ' + last);
         if (q > 0) parts.push('排队 ' + q + ' 条');
         parts.push('评论区 ' + ((stats && stats.videos) || 0) + ' 个');
+        parts.push('评论消息 ' + ((stats && stats.message_feed) ? '开' : '关'));
         scanEl.textContent = parts.join(' · ');
     }
 }

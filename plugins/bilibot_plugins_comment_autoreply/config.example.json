@@ -15,6 +15,7 @@
         "poll_interval_seconds": 120,
         "send_interval_seconds": 8,
         "videos": [],
+        "message_feed": false,
         "accounts": [],
         "only_mention": false,
         "trigger_keywords": [],

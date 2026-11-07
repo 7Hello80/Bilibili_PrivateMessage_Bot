@@ -2,11 +2,13 @@
 """
 评论区 AI 自动回复插件
 ========================================
-定时扫描配置的视频 / 动态 / 专栏评论区，把新评论交给大模型生成回复并发送。
+定时扫描配置的视频 / 动态 / 专栏评论区，也可以扫描「回复我的」评论消息，
+把 @ 我 / 回复我的新评论交给大模型生成回复并发送。
 
 功能
 ----
 - 支持多个评论区（视频 BV/av、动态、专栏），每个评论区可指定账号
+- 支持不配置评论区，直接从消息中心「回复我的」中扫描 @ 我 / 回复我的评论
 - 首次扫描只记录基线，不会把历史评论全部回复一遍（可配置）
 - 支持关键词过滤、仅回复 @UP、忽略用户、用户冷却、每日限额、单次扫描上限
 - 支持 dry_run（只生成记录不发送），方便先观察效果
@@ -17,6 +19,7 @@
 API 文档来自 bilibili-API-collect：
 - 评论列表: GET https://api.bilibili.com/x/v2/reply
 - 发表评论: POST https://api.bilibili.com/x/v2/reply/add
+- 回复我的消息: GET https://api.bilibili.com/x/msgfeed/reply
 - 评论类型: 1 视频 / 12 专栏 / 17 动态
 
 面板访问前缀: /api/plugins/api/bilibot_plugins_comment_autoreply
@@ -55,6 +58,7 @@ DEFAULT_CONFIG = {
         "poll_interval_seconds": 120,
         "send_interval_seconds": 8,
         "videos": [],
+        "message_feed": False,
         "accounts": [],
         "only_mention": False,
         "trigger_keywords": [],
@@ -76,6 +80,7 @@ DEFAULT_CONFIG = {
 COMMENT_URL = "https://api.bilibili.com/x/v2/reply"
 ADD_COMMENT_URL = "https://api.bilibili.com/x/v2/reply/add"
 VIEW_URL = "https://api.bilibili.com/x/web-interface/view"
+MSG_REPLY_URL = "https://api.bilibili.com/x/msgfeed/reply"
 
 COMMENT_TYPE_NAMES = {1: "视频", 12: "专栏", 17: "动态"}
 
@@ -119,7 +124,7 @@ class CommentError(Exception):
 class Plugin(plugin_dev.APIPlugin):
     def __init__(self, bot_manager=None, config_manager=None, plugin_config=None):
         super().__init__(bot_manager, config_manager, plugin_config)
-        self.version = "1.0.0"
+        self.version = "1.1.0"
 
         self._stats = {
             "ai_calls": 0,
@@ -205,13 +210,15 @@ class Plugin(plugin_dev.APIPlugin):
             self.logger.info("评论区自动回复处于关闭状态（可在面板开启）")
         else:
             videos = self._normalise_videos(cfg.get("videos"))
+            feed = self._bool(cfg.get("message_feed"))
             self.logger.info(
-                "评论区自动回复已启用: 评论区=%s, 间隔=%ss, 冷却=%ss, 每日上限=%s, dry_run=%s" % (
-                    len(videos), cfg.get("poll_interval_seconds"),
+                "评论区自动回复已启用: 评论区=%s, 评论消息=%s, 间隔=%ss, 冷却=%ss, 每日上限=%s, dry_run=%s" % (
+                    len(videos), "开" if feed else "关", cfg.get("poll_interval_seconds"),
                     cfg.get("cooldown_seconds"), cfg.get("max_replies_per_day"),
                     cfg.get("dry_run")))
-            if not videos:
-                self.logger.warning("已开启评论区自动回复，但尚未配置任何评论区")
+            if not videos and not feed:
+                self.logger.warning(
+                    "已开启评论区自动回复，但既没有配置评论区，也没有开启评论消息扫描")
 
     def on_unload(self):
         self._stop.set()
@@ -753,11 +760,21 @@ class Plugin(plugin_dev.APIPlugin):
             if not cfg.get("enabled") and not force:
                 return False
             videos = self._normalise_videos(cfg.get("videos"))
+            feed_enabled = self._bool(cfg.get("message_feed"))
             self._last_scan_at = started
-            if not videos:
+            if not videos and not feed_enabled:
                 if force:
-                    self._last_error = "尚未配置任何评论区"
+                    self._last_error = "尚未配置任何评论区，也未开启评论消息扫描"
                 return False
+            if feed_enabled:
+                try:
+                    self._scan_message_feed(cfg)
+                except CommentError as e:
+                    self._last_error = str(e)
+                    self.logger.error("扫描评论消息失败: %s" % e)
+                except Exception as e:
+                    self._last_error = str(e)
+                    self.logger.error("扫描评论消息异常: %s" % e)
             for video in videos:
                 if self._stop.is_set():
                     break
@@ -934,11 +951,277 @@ class Plugin(plugin_dev.APIPlugin):
             "root": Plugin._to_int(raw.get("root"), 0),
         }
 
+    # ---------- 评论消息（回复我的 / @我的） ----------
+
+    def _scan_message_feed(self, cfg):
+        """扫描消息中心的「回复我的」，不依赖 videos 配置"""
+        bots = self._bots(cfg)
+        if not bots:
+            raise CommentError("没有可用账号（请检查账号名称或机器人是否启动）")
+        scanned = set()
+        for bot in bots:
+            if self._stop.is_set():
+                break
+            uid = str(getattr(bot, "self_uid", "") or getattr(bot, "account_name", ""))
+            if uid in scanned:
+                continue
+            scanned.add(uid)
+            try:
+                self._scan_message_feed_bot(cfg, bot)
+            except CommentError as e:
+                self._last_error = str(e)
+                self.logger.error("扫描账号 %s 的评论消息失败: %s" % (
+                    getattr(bot, "account_name", uid), e))
+            except Exception as e:
+                self._last_error = str(e)
+                self.logger.error("扫描账号 %s 的评论消息异常: %s" % (
+                    getattr(bot, "account_name", uid), e))
+            self._stop.wait(1)
+
+    def _fetch_msgfeed(self, bot):
+        params = {
+            "build": 0,
+            "mobi_app": "web",
+            "platform": "web",
+            "web_location": "333.1387",
+        }
+        data = self._get_json(MSG_REPLY_URL, params, bot,
+                              "https://message.bilibili.com/")
+        code = self._to_int(data.get("code"), -1)
+        if code != 0:
+            raise CommentError("回复我的消息接口错误 %s: %s" % (
+                code, data.get("message") or "未知错误"))
+        payload = data.get("data")
+        return payload if isinstance(payload, dict) else {}
+
+    def _scan_message_feed_bot(self, cfg, bot):
+        payload = self._fetch_msgfeed(bot)
+        raw_items = payload.get("items")
+        if not isinstance(raw_items, list):
+            raw_items = []
+
+        uid = str(getattr(bot, "self_uid", "") or getattr(bot, "account_name", ""))
+        vkey = "msgfeed:%s" % uid
+        rows = []
+        for raw in raw_items:
+            row = self._msgfeed_row(raw)
+            if not row:
+                continue
+            if row.get("type") == 1 and str(row.get("oid") or "").upper().startswith("BV"):
+                try:
+                    resolved = self._resolve_video(bot, {
+                        "type": 1,
+                        "oid": row["oid"],
+                        "bvid": row["oid"],
+                        "title": row.get("title") or "",
+                    })
+                except CommentError as e:
+                    self.logger.warning("评论消息中的视频 %s 解析失败: %s" % (
+                        row.get("oid"), e))
+                    continue
+                row["oid"] = str(resolved.get("oid") or row["oid"])
+                row["bvid"] = resolved.get("bvid") or row.get("bvid") or ""
+                row["title"] = row.get("title") or resolved.get("title") or ""
+            if self._seen_any(row["rpid"]):
+                continue
+            rows.append(row)
+
+        rows.sort(key=lambda row: (row.get("ctime") or 0, row.get("rpid") or ""))
+        now = time.time()
+        state = self.database.fetch_one(
+            "SELECT baseline_at FROM comment_scan_state WHERE key = ?", (vkey,))
+        if state is None and not self._bool(cfg.get("reply_on_first_scan")):
+            for row in rows:
+                self._mark_feed_seen(row, vkey)
+            self.database.execute(
+                "INSERT OR REPLACE INTO comment_scan_state "
+                "(key, baseline_at, last_scan_at) VALUES (?, ?, ?)",
+                (vkey, now, now))
+            self._stats["baseline"] += len(rows)
+            self.logger.info(
+                "账号 %s 首次扫描评论消息，已记录基线 %s 条（不回复历史消息）" % (
+                    getattr(bot, "account_name", uid), len(rows)))
+            return
+
+        if state is None:
+            self.database.execute(
+                "INSERT OR REPLACE INTO comment_scan_state "
+                "(key, baseline_at, last_scan_at) VALUES (?, ?, ?)",
+                (vkey, 0, now))
+
+        budget = max(0, self._to_int(cfg.get("max_replies_per_scan"), 20))
+        queued = 0
+        for row in rows:
+            if self._seen_any(row["rpid"]):
+                continue
+            # 无论是否回复都标记为已处理，避免下一轮反复判断
+            self._mark_feed_seen(row, vkey)
+            self._stats["scanned"] += 1
+
+            reason = self._skip_reason(row, cfg, bot)
+            if not reason and budget <= 0:
+                reason = "达到单次扫描上限"
+            if reason:
+                self._stats["skipped"] += 1
+                self.logger.debug("跳过评论消息 %s: %s" % (row["rpid"], reason))
+                continue
+
+            job = {
+                "account_name": getattr(bot, "account_name", ""),
+                "type": row.get("type") or 1,
+                "oid": str(row.get("oid") or ""),
+                "bvid": row.get("bvid") or "",
+                "title": row.get("title") or "",
+                "rpid": row["rpid"],
+                "root_rpid": row.get("root_rpid") or row["rpid"],
+                "parent_rpid": row.get("parent_rpid") or row["rpid"],
+                "mid": row["mid"],
+                "uname": row["uname"],
+                "content": row["content"],
+                "ctime": row["ctime"],
+                "source": "message",
+            }
+            try:
+                self._queue.put_nowait(job)
+            except queue.Full:
+                self._stats["skipped"] += 1
+                self.logger.warning("评论回复队列已满，丢弃评论消息 %s" % row["rpid"])
+                break
+            self._stats["queued"] += 1
+            self._touch_cooldown(row["mid"])
+            budget -= 1
+            queued += 1
+
+        self.database.execute(
+            "INSERT OR REPLACE INTO comment_scan_state "
+            "(key, baseline_at, last_scan_at) VALUES (?, ?, ?)",
+            (vkey, state[0] if state else 0, now))
+        if queued:
+            self.logger.info("账号 %s：从评论消息发现 %s 条待回复评论" % (
+                getattr(bot, "account_name", uid), queued))
+
+    @classmethod
+    def _msgfeed_row(cls, raw):
+        """把「回复我的」通知转换成与评论区一致的行结构"""
+        if not isinstance(raw, dict):
+            return None
+        item = raw.get("item") if isinstance(raw.get("item"), dict) else {}
+        source_id = str(item.get("source_id") or "").strip()
+        if not source_id.isdigit():
+            return None
+        content = str(item.get("source_content") or "").strip()
+        if not content:
+            return None
+
+        user = raw.get("user") if isinstance(raw.get("user"), dict) else {}
+        vtype, oid, bvid, title = cls._msgfeed_target(item)
+        if not oid:
+            return None
+        root_id = str(item.get("root_id") or "0").strip()
+        root_rpid = source_id if root_id in ("", "0") else root_id
+        return {
+            "rpid": source_id,
+            "mid": str(user.get("mid") or "").strip(),
+            "uname": str(user.get("nickname") or "").strip(),
+            "content": content,
+            "ctime": cls._to_int(raw.get("reply_time"), 0),
+            "state": 0,
+            "root": 0,          # 消息可能来自楼中楼，交给 _send_reply 用 root/parent 处理
+            "directed": True,   # 本身就是 @我 / 回复我，不受 only_mention 限制
+            "type": vtype,
+            "oid": oid,
+            "bvid": bvid,
+            "title": title,
+            "root_rpid": root_rpid,
+            "parent_rpid": source_id,
+            "notice_id": str(raw.get("id") or "").strip(),
+        }
+
+    @classmethod
+    def _msgfeed_target(cls, item):
+        """从通知的 uri / business_id 推断评论类型与 oid"""
+        uri = str(item.get("uri") or item.get("native_uri") or "")
+        title = str(item.get("title") or "").strip()
+        vtype = 0
+        oid = ""
+        bvid = ""
+
+        match = re.search(r"bilibili\.com/video/(BV[0-9A-Za-z]{10})", uri)
+        if not match:
+            match = re.search(r"bilibili\.com/video/av(\d+)", uri, re.I)
+        if match:
+            vtype = 1
+            oid = match.group(1)
+            if oid.upper().startswith("BV"):
+                bvid = oid
+        else:
+            match = re.search(r"bilibili\.com/read/cv(\d+)", uri, re.I)
+            if match:
+                vtype = 12
+                oid = match.group(1)
+            else:
+                match = re.search(r"t\.bilibili\.com/(\d+)", uri, re.I)
+                if not match:
+                    match = re.search(r"bilibili\.com/opus/(\d+)", uri, re.I)
+                if match:
+                    vtype = 17
+                    oid = match.group(1)
+
+        if not oid:
+            business_id = cls._to_int(item.get("business_id"), 0)
+            oid = str(item.get("subject_id") or "").strip()
+            vtype = {1: 1, 12: 12, 11: 17, 17: 17}.get(business_id, 0)
+            if not vtype:
+                business = str(item.get("business") or "")
+                if "专栏" in business or "文章" in business:
+                    vtype = 12
+                elif "动态" in business:
+                    vtype = 17
+                elif "视频" in business:
+                    vtype = 1
+            if not vtype:
+                vtype = 1
+
+        oid = str(oid).strip()
+        if not oid:
+            return 0, "", "", title
+        if vtype not in (1, 12, 17):
+            vtype = 1
+        if not title:
+            if vtype == 1:
+                title = "视频 av%s" % oid
+            elif vtype == 12:
+                title = "专栏 cv%s" % oid
+            else:
+                title = "动态 %s" % oid
+        return vtype, oid, bvid, title[:120]
+
+    def _mark_feed_seen(self, row, vkey):
+        rpid = str(row.get("rpid") or "")
+        if not rpid:
+            return
+        self._mark_seen(vkey, rpid)
+        vtype = self._to_int(row.get("type"), 1)
+        oid = str(row.get("oid") or "")
+        if oid:
+            self._mark_seen("%s:%s" % (vtype, oid), rpid)
+
+    def _seen_any(self, rpid):
+        """rpid 全局唯一：检查该评论是否已被任意来源处理过"""
+        rpid = str(rpid or "").strip()
+        if not rpid.isdigit():
+            return False
+        row = self.database.fetch_one(
+            "SELECT key FROM comment_seen WHERE key LIKE ? LIMIT 1",
+            ("%:" + rpid,))
+        return bool(row)
+
     def _skip_reason(self, row, cfg, bot):
         content = str(row.get("content") or "").strip()
         if not content:
             return "空评论"
-        if str(row.get("root") or "0") not in ("0", ""):
+        directed = bool(row.get("directed"))
+        if not directed and str(row.get("root") or "0") not in ("0", ""):
             return "楼中楼评论（只回复一级评论）"
         own_uid = str(getattr(bot, "self_uid", "") or "")
         if own_uid and str(row.get("mid") or "") == own_uid:
@@ -963,10 +1246,11 @@ class Plugin(plugin_dev.APIPlugin):
 
         triggers = self._keyword_list(cfg.get("trigger_keywords"))
         hit_trigger = any(word.lower() in lower for word in triggers) if triggers else False
-        if triggers and not hit_trigger:
+        # 评论消息里的 @我 / 回复我 本身就是针对本账号的，不受触发关键词限制
+        if triggers and not hit_trigger and not directed:
             return "未命中触发关键词"
 
-        if self._bool(cfg.get("only_mention")) and not hit_trigger:
+        if self._bool(cfg.get("only_mention")) and not hit_trigger and not directed:
             if not re.search(r"@[^\s@]{1,30}", content):
                 return "未 @UP 且未命中关键词"
 
@@ -1191,11 +1475,14 @@ class Plugin(plugin_dev.APIPlugin):
             "oid": job.get("oid") or "",
             "bvid": job.get("bvid") or "",
         }
+        # 评论消息可能来自楼中楼：root 必须是根评论，parent 是直接回复的那条评论
+        root_rpid = job.get("root_rpid") or job.get("rpid")
+        parent_rpid = job.get("parent_rpid") or job.get("rpid")
         form = {
             "type": video["type"],
             "oid": video["oid"],
-            "root": job.get("rpid"),
-            "parent": job.get("rpid"),
+            "root": root_rpid,
+            "parent": parent_rpid,
             "message": message,
             "plat": 1,
             "csrf": csrf,
@@ -1294,7 +1581,7 @@ class Plugin(plugin_dev.APIPlugin):
 
         incoming_comment = self._p(data, "comment")
         if isinstance(incoming_comment, dict):
-            for field in ("enabled", "dry_run", "only_mention",
+            for field in ("enabled", "dry_run", "only_mention", "message_feed",
                           "reply_on_first_scan", "prefix_at", "keyword_only"):
                 if field in incoming_comment:
                     comment[field] = self._bool(
@@ -1330,12 +1617,16 @@ class Plugin(plugin_dev.APIPlugin):
         self._ai_fallback_cache = (0, {})
         if comment.get("enabled"):
             self._last_scan_tried = 0  # 开启后尽快扫描一次
-        self.logger.info("评论回复配置已更新: enabled=%s, dry_run=%s, videos=%s" % (
+        self.logger.info("评论回复配置已更新: enabled=%s, dry_run=%s, videos=%s, 评论消息=%s" % (
             comment.get("enabled"), comment.get("dry_run"),
-            len(self._normalise_videos(comment.get("videos")))))
+            len(self._normalise_videos(comment.get("videos"))),
+            "开" if self._bool(comment.get("message_feed")) else "关"))
         message = "配置已保存并生效"
         if comment.get("keyword_only") and not comment.get("keyword_rules"):
             message += "；注意：已开启仅关键词模式但没有配置规则，所有评论都会被跳过"
+        if (comment.get("enabled") and not self._normalise_videos(comment.get("videos"))
+                and not self._bool(comment.get("message_feed"))):
+            message += "；注意：尚未配置评论区，也未开启评论消息扫描，不会扫描到任何评论"
         return {
             "success": True,
             "message": message,
@@ -1388,6 +1679,7 @@ class Plugin(plugin_dev.APIPlugin):
             "model": llm.get("model") or "",
             "max_replies_per_day": self._to_int(cfg.get("max_replies_per_day"), 100),
             "videos": len(self._normalise_videos(cfg.get("videos"))),
+            "message_feed": bool(cfg.get("message_feed")),
             "queue_size": self._queue.qsize(),
             "worker_alive": bool(self._worker and self._worker.is_alive()),
             "poller_alive": bool(self._poller and self._poller.is_alive()),
@@ -1400,8 +1692,9 @@ class Plugin(plugin_dev.APIPlugin):
     def api_scan(self, data):
         cfg = self._comment_cfg()
         videos = self._normalise_videos(cfg.get("videos"))
-        if not videos:
-            return {"success": False, "message": "请先配置至少一个评论区"}
+        if not videos and not self._bool(cfg.get("message_feed")):
+            return {"success": False,
+                    "message": "请先配置至少一个评论区，或在面板开启「扫描评论消息（回复我的）」"}
         if self._scan_lock.locked():
             return {"success": False, "message": "正在扫描中，请稍后再试"}
         self._last_scan_tried = time.time()
@@ -1450,6 +1743,7 @@ class Plugin(plugin_dev.APIPlugin):
             "模型: %s（%s）" % (stats["model"] or "未配置",
                               "可用" if stats["llm_ready"] else "未就绪"),
             "评论区: %s 个，排队: %s 条" % (stats["videos"], stats["queue_size"]),
+            "评论消息（回复我的）: %s" % ("开启" if stats["message_feed"] else "关闭"),
             "关键词规则: %s 条%s" % (
                 stats["keyword_rules"],
                 "（仅关键词模式，未命中不回复）" if stats["keyword_only"] else ""),
@@ -1465,11 +1759,11 @@ class Plugin(plugin_dev.APIPlugin):
 
     def cmd_scan(self, message_data, args):
         cfg = self._comment_cfg()
-        if not self._normalise_videos(cfg.get("videos")):
-            return "尚未配置评论区，请先在面板「评论自动回复」中添加"
+        if not self._normalise_videos(cfg.get("videos")) and not self._bool(cfg.get("message_feed")):
+            return "尚未配置评论区，也未开启评论消息扫描，请先在面板「评论自动回复」中设置"
         if self._scan_lock.locked():
             return "正在扫描中，请稍后再试"
         self._last_scan_tried = time.time()
         threading.Thread(target=self._scan_once, kwargs={"force": True},
                          daemon=True, name="comment-manual-scan").start()
-        return "已开始扫描评论区，结果会记录在插件日志与面板中"
+        return "已开始扫描评论区与评论消息，结果会记录在插件日志与面板中"
