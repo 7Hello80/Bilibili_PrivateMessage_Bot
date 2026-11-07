@@ -2451,7 +2451,8 @@ input:focus-visible + .slider {
 }
 .toast {
   display: flex;
-  align-items: flex-start;
+  /* 单行/多行文本都与图标、关闭按钮保持垂直居中 */
+  align-items: center;
   gap: 10px;
   padding: 12px 14px;
   border-radius: 13px;
@@ -2486,14 +2487,25 @@ input:focus-visible + .slider {
 .toast.error { border-color: #fecaca; }
 .toast.warning { border-color: #fde68a; }
 .toast.info { border-color: #bae6fd; }
-.toast .toast-body { flex: 1; min-width: 0; line-height: 1.55; word-break: break-word; }
+.toast .toast-body {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.55;
+  word-break: break-word;
+  /* 弹性布局下由 .toast 的 align-items:center 居中，这里不再加额外偏移 */
+  align-self: center;
+}
 .toast .toast-close {
   flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
   border: 0;
   background: transparent;
   color: var(--muted-soft);
   cursor: pointer;
-  padding: 2px;
+  padding: 0;
 }
 .toast .toast-close:hover { color: var(--ink); }
 
@@ -3557,30 +3569,12 @@ body.drawer-open { overflow: hidden; }
 .ai-status-value.is-off { color: var(--danger); }
 .ai-status-value.is-idle { color: var(--muted); }
 
-.ai-alert {
-  margin: 0 0 16px;
-  margin-top: 10px;
-  padding: 10px 14px;
-  border-radius: 10px;
-  border: 1px solid #fde68a;
-  background: #fffbeb;
-  color: #b45309;
-}
-.ai-alert.is-error {
-  border-color: #fecaca;
-  background: #fef2f2;
-  color: #b91c1c;
-}
-
 .ai-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr);
   gap: 18px;
   align-items: start;
 }
-/* 提示条可见时自身已带下边距，避免与双栏区叠加出过大空隙 */
-.ai-alert:not(.hidden) + .ai-layout { margin-top: 0; }
-
 .ai-switch-row {
   display: flex;
   align-items: flex-start;

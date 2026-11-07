@@ -4783,19 +4783,6 @@ function aiGetNumber(id, fallback) {
     return Number.isFinite(num) ? num : fallback;
 }
 
-function aiShowAlert(message, isError) {
-    const el = document.getElementById('ai-reply-alert');
-    if (!el) return;
-    if (!message) {
-        el.textContent = '';
-        el.classList.add('hidden');
-        return;
-    }
-    el.textContent = message;
-    el.classList.toggle('is-error', !!isError);
-    el.classList.remove('hidden');
-}
-
 function aiSetHint(id, text, state) {
     const el = document.getElementById(id);
     if (!el) return;
@@ -4918,14 +4905,13 @@ async function aiReplyLoadConfig() {
                 reply: (data.config && data.config.reply) || {}
             };
         } catch (inner) {
-            aiShowAlert('读取配置失败：' + (inner.message || e.message), true);
+            showNotification('读取配置失败：' + (inner.message || e.message), 'error');
             return;
         }
     }
     const cfg = aiMergeConfig(raw);
     aiReplyConfigLoaded = true;
     aiReplyFillForm(cfg);
-    aiShowAlert('');
 }
 
 async function aiReplySave() {
@@ -4947,12 +4933,12 @@ async function aiReplySave() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ llm: cfg.llm, reply: cfg.reply })
         });
-        showNotification(data.message || '配置已保存', 'success');
-        aiShowAlert(cfg.reply.dry_run
-            ? '已保存：当前是预览模式，AI 只会生成记录，不会真的发送私信。'
-            : '已保存：AI 将自动回复符合条件的私信。', false);
         if (!cfg.reply.enabled) {
-            aiShowAlert('已保存：AI 自动回复处于关闭状态。', false);
+            showNotification('已保存：AI 自动回复处于关闭状态。', 'warning');
+        } else if (cfg.reply.dry_run) {
+            showNotification('已保存：当前是预览模式，AI 只会生成记录，不会真的发送私信。', 'success');
+        } else {
+            showNotification(data.message || '已保存：AI 将自动回复符合条件的私信。', 'success');
         }
         await aiReplyLoadConfig();
         await aiReplyLoadStats();
@@ -5345,27 +5331,13 @@ async function commentReplyLoadConfig() {
                 comment: (data.config && data.config.comment) || {}
             };
         } catch (inner) {
-            commentReplyShowAlert('读取配置失败：' + (inner.message || e.message), true);
+            showNotification('读取配置失败：' + (inner.message || e.message), 'error');
             return;
         }
     }
     const cfg = aiMergeConfig(raw, CM_REPLY_DEFAULTS);
     commentReplyConfigLoaded = true;
     commentReplyFillForm(cfg);
-    commentReplyShowAlert('');
-}
-
-function commentReplyShowAlert(message, isError) {
-    const el = document.getElementById('cm-reply-alert');
-    if (!el) return;
-    if (!message) {
-        el.textContent = '';
-        el.classList.add('hidden');
-        return;
-    }
-    el.textContent = message;
-    el.classList.toggle('is-error', !!isError);
-    el.classList.remove('hidden');
 }
 
 async function commentReplySave() {
@@ -5378,15 +5350,14 @@ async function commentReplySave() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ llm: cfg.llm, comment: cfg.comment })
         });
-        showNotification(data.message || '配置已保存', 'success');
         if (!cfg.comment.enabled) {
-            commentReplyShowAlert('已保存：评论自动回复处于关闭状态。', false);
+            showNotification('已保存：评论自动回复处于关闭状态。', 'warning');
         } else if (!cfg.comment.videos.length && !cfg.comment.message_feed) {
-            commentReplyShowAlert('已保存：尚未配置评论区，也未开启评论消息扫描，插件不会扫描到任何评论。', false);
+            showNotification('已保存：尚未配置评论区，也未开启评论消息扫描，插件不会扫描到任何评论。', 'warning');
         } else if (cfg.comment.dry_run) {
-            commentReplyShowAlert('已保存：当前是预览模式，只会生成记录，不会真的发评论。', false);
+            showNotification('已保存：当前是预览模式，只会生成记录，不会真的发评论。', 'success');
         } else {
-            commentReplyShowAlert('已保存：插件会按设定间隔扫描并自动回复新评论。', false);
+            showNotification(data.message || '已保存：插件会按设定间隔扫描并自动回复新评论。', 'success');
         }
         if (data.comment && data.comment.videos) {
             aiSetValue('cm-reply-videos', cmVideosToText(data.comment.videos));
@@ -5441,7 +5412,7 @@ async function commentReplyScan() {
             body: JSON.stringify({})
         });
         showNotification(data.message || '已开始扫描', 'success');
-        commentReplyShowAlert('正在扫描评论区与评论消息，稍后可在下方「扫描日志」与「评论回复记录」中查看结果。', false);
+        showNotification('正在扫描评论区与评论消息，稍后可在下方「扫描日志」与「评论回复记录」中查看结果。', 'info');
         setTimeout(() => {
             commentReplyLoadStats();
             commentReplyLoadLogs();
