@@ -82,6 +82,13 @@ COMMENT_URL = "https://api.bilibili.com/x/v2/reply"
 ADD_COMMENT_URL = "https://api.bilibili.com/x/v2/reply/add"
 VIEW_URL = "https://api.bilibili.com/x/web-interface/view"
 MSG_REPLY_URL = "https://api.bilibili.com/x/msgfeed/reply"
+# 「@我的」是独立接口：纯 @ 通知不会出现在 x/msgfeed/reply 里，
+# 只扫 reply 会漏掉大量评论里的 @（实测 reply=0 而 at=1）
+MSG_AT_URL = "https://api.bilibili.com/x/msgfeed/at"
+MSG_UNREAD_URL = "https://api.bilibili.com/x/msgfeed/unread"
+# 消息接口原始返回的调试落盘位置（相对项目根目录，.tmp 已在 .gitignore 中）
+MSGFEED_DEBUG_PATH = os.path.join(".tmp", "msgfeed_debug.txt")
+MSGFEED_DEBUG_LIMIT = 512 * 1024   # 单文件上限，超出后重新开始写
 
 COMMENT_TYPE_NAMES = {1: "视频", 12: "专栏", 17: "动态"}
 
@@ -125,7 +132,7 @@ class CommentError(Exception):
 class Plugin(plugin_dev.APIPlugin):
     def __init__(self, bot_manager=None, config_manager=None, plugin_config=None):
         super().__init__(bot_manager, config_manager, plugin_config)
-        self.version = "1.2.0"
+        self.version = "1.2.1"
 
         self._stats = {
             "ai_calls": 0,
@@ -1001,32 +1008,143 @@ class Plugin(plugin_dev.APIPlugin):
                     getattr(bot, "account_name", uid), e))
             self._stop.wait(1)
 
-    def _fetch_msgfeed(self, bot):
+    def _fetch_msgfeed(self, bot, url=MSG_REPLY_URL, label="回复我的"):
+        """请求消息接口，返回完整 JSON（含 code/message/data），失败抛 CommentError"""
         params = {
             "build": 0,
             "mobi_app": "web",
             "platform": "web",
             "web_location": "333.1387",
         }
-        data = self._get_json(MSG_REPLY_URL, params, bot,
-                              "https://message.bilibili.com/")
+        data = self._get_json(url, params, bot, "https://message.bilibili.com/")
         code = self._to_int(data.get("code"), -1)
         if code != 0:
-            raise CommentError("回复我的消息接口错误 %s: %s" % (
-                code, data.get("message") or "未知错误"))
+            raise CommentError("%s消息接口错误 %s: %s" % (
+                label, code, data.get("message") or "未知错误"))
+        if not isinstance(data.get("data"), dict):
+            data = dict(data)
+            data["data"] = {}
+        return data
+
+    def _fetch_msgfeed_unread(self, bot):
+        """未读数（best-effort，仅用于日志与调试，不影响主流程）"""
+        try:
+            data = self._get_json(
+                MSG_UNREAD_URL,
+                {"build": 0, "mobi_app": "web", "platform": "web"},
+                bot, "https://message.bilibili.com/")
+        except Exception as e:
+            self.logger.debug("读取消息未读数失败: %s" % e)
+            return {}
         payload = data.get("data")
         return payload if isinstance(payload, dict) else {}
 
+    def _dump_msgfeed_debug(self, account, sections):
+        """把消息接口原始返回写进本地文本文件，方便人工排查
+
+        sections: [(标题, 请求信息 dict, 接口原始 JSON dict)]
+        写入 MSGFEED_DEBUG_PATH（默认 .tmp/msgfeed_debug.txt），追加模式，
+        文件超过 MSGFEED_DEBUG_LIMIT 时自动重写，避免无限增长。
+        """
+        try:
+            # __file__ = <项目>/plugins/<插件>/main.py，向上三层才是项目根目录
+            root = os.path.dirname(os.path.dirname(os.path.dirname(
+                os.path.abspath(__file__))))
+            path = os.path.join(root, MSGFEED_DEBUG_PATH)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            if os.path.exists(path) and os.path.getsize(path) > MSGFEED_DEBUG_LIMIT:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            lines = ["", "=" * 78,
+                     "时间: %s  账号: %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), account)]
+            for title, meta, payload in sections:
+                lines.append("-" * 78)
+                lines.append("[%s] %s" % (title, meta.get("url", "")))
+                lines.append("参数: %s" % json.dumps(
+                    meta.get("params") or {}, ensure_ascii=False))
+                data = payload.get("data") if isinstance(payload, dict) else None
+                counts = ""
+                if isinstance(data, dict) and isinstance(data.get("items"), list):
+                    counts = "  items=%s" % len(data["items"])
+                lines.append("code=%s message=%s%s" % (
+                    payload.get("code") if isinstance(payload, dict) else "?",
+                    payload.get("message") if isinstance(payload, dict) else "?",
+                    counts))
+                lines.append("原始返回:")
+                lines.append(json.dumps(payload, ensure_ascii=False, indent=2))
+            with open(path, "a", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+            return path
+        except Exception as e:
+            self.logger.warning("写入消息调试文件失败: %s" % e)
+            return ""
+
     def _scan_message_feed_bot(self, cfg, bot):
-        payload = self._fetch_msgfeed(bot)
-        raw_items = payload.get("items")
-        if not isinstance(raw_items, list):
-            raw_items = []
+        account = getattr(bot, "account_name", "") or str(getattr(bot, "self_uid", ""))
+        raw_items = []
+        sections = []
+        failures = []
+        # 1) 回复我的  2) @我的（两个接口返回结构一致，但通知内容不重合）
+        for title, url, label in (("回复我的", MSG_REPLY_URL, "回复我的"),
+                                  ("@我的", MSG_AT_URL, "@我的")):
+            try:
+                payload = self._fetch_msgfeed(bot, url, label)
+            except CommentError as e:
+                failures.append(str(e))
+                sections.append((title, {"url": url, "params": {
+                    "build": 0, "mobi_app": "web", "platform": "web",
+                    "web_location": "333.1387"}}, {"code": "ERROR", "message": str(e)}))
+                self._log_scan("warning", "账号 %s：%s 接口失败: %s" % (account, label, e))
+                continue
+            items = (payload.get("data") or {}).get("items")
+            items = items if isinstance(items, list) else []
+            sections.append((title, {"url": url, "params": {
+                "build": 0, "mobi_app": "web", "platform": "web",
+                "web_location": "333.1387"}}, payload))
+            raw_items.extend(items)
+            self._log_scan("info", "账号 %s：%s 接口返回 %s 条通知" % (
+                account, label, len(items)))
+
+        unread = self._fetch_msgfeed_unread(bot)
+        if unread:
+            sections.append(("未读数", {
+                "url": MSG_UNREAD_URL,
+                "params": {"build": 0, "mobi_app": "web", "platform": "web"}},
+                {"code": 0, "data": unread}))
+            self._log_scan("info", "账号 %s：消息未读数 回复=%s @=%s" % (
+                account, unread.get("reply"), unread.get("at")))
+
+        dump_path = self._dump_msgfeed_debug(account, sections)
+        if dump_path:
+            self._log_scan("info", "消息接口原始返回已写入 %s（%s 条通知）" % (
+                dump_path, len(raw_items)))
+
+        if failures and not raw_items:
+            raise CommentError("；".join(failures))
+        if failures:
+            self._log_scan("warning", "部分消息接口失败（已用其余接口继续）: %s" % (
+                "；".join(failures)))
+
+        # 同一通知可能同时出现在 @ 与回复里，按 rpid 去重
+        dedup = {}
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            key = str(raw.get("id") or "")
+            item = raw.get("item") if isinstance(raw.get("item"), dict) else {}
+            key = key or str(item.get("source_id") or "")
+            if key and key in dedup:
+                continue
+            if key:
+                dedup[key] = raw
+            else:
+                dedup["_%d" % len(dedup)] = raw
+        raw_items = list(dedup.values())
 
         uid = str(getattr(bot, "self_uid", "") or getattr(bot, "account_name", ""))
         vkey = "msgfeed:%s" % uid
-        self._log_scan("info", "账号 %s：评论消息接口返回 %s 条通知" % (
-            getattr(bot, "account_name", uid), len(raw_items)))
         rows = []
         for raw in raw_items:
             row = self._msgfeed_row(raw)
@@ -1204,7 +1322,7 @@ class Plugin(plugin_dev.APIPlugin):
             "mid": str(user.get("mid") or "").strip(),
             "uname": str(user.get("nickname") or "").strip(),
             "content": content,
-            "ctime": cls._to_int(raw.get("reply_time"), 0),
+            "ctime": cls._to_int(raw.get("reply_time") or raw.get("at_time"), 0),
             "state": 0,
             "root": 0,          # 消息可能来自楼中楼，交给 _send_reply 用 root/parent 处理
             "directed": True,   # 本身就是 @我 / 回复我，不受 only_mention 限制

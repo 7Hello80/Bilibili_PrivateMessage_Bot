@@ -8,7 +8,7 @@
 | --- | --- |
 | 获取评论列表 | `GET https://api.bilibili.com/x/v2/reply`（`type` + `oid`，默认按时间，接口返回空时自动回退按点赞） |
 | 发表评论 | `POST https://api.bilibili.com/x/v2/reply/add`（`type`、`oid`、`root`、`parent`、`message`、`csrf`） |
-| 回复我的消息 | `GET https://api.bilibili.com/x/msgfeed/reply`（消息中心「回复我的」） |
+| 回复我的 / @我的消息 | `GET https://api.bilibili.com/x/msgfeed/reply`（回复我的）、`GET https://api.bilibili.com/x/msgfeed/at`（@我的） |
 | BV 转 aid / 补全标题 | `GET https://api.bilibili.com/x/web-interface/view` |
 
 `type` 取值：`1` 视频、`12` 专栏、`17` 动态。
@@ -101,7 +101,8 @@
 
 ### 扫描来源二：评论消息（`message_feed`）
 
-开启 `comment.message_feed` 后，插件会读取消息中心的「回复我的」，**不需要配置 `videos`**：
+开启 `comment.message_feed` 后，插件会同时读取消息中心的「回复我的」与「@我的」两个接口
+（纯 @ 通知只会出现在 `x/msgfeed/at`，只扫 `x/msgfeed/reply` 会漏消息），**不需要配置 `videos`**：
 
 - 包括别人在视频、动态、专栏评论区 **@你**，以及**直接回复你的评论**（含楼中楼）
 - 自动从消息中的 `uri` / `business_id` 识别评论类型与 `oid`，视频消息还能反查标题用于占位符 `{title}`
