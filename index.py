@@ -243,6 +243,8 @@ class SimpleBilibiliReply:
 
     def _remember_msg(self, msg_id):
         """记录已处理消息并清理过期条目(600秒前)与超量条目(上限2000)"""
+        if msg_id is None or msg_id == "":
+            return
         now = time.time()
         self.processed_msg_ids[msg_id] = now
         # 删除 600 秒前的条目
@@ -550,6 +552,9 @@ class SimpleBilibiliReply:
                 
                 if data.get("code") == 0:
                     print(f"{Fore.GREEN}✓ [{self.account_name}] 成功发送消息给 {Fore.MAGENTA}{receiver_id}")
+                    # 记下自己发出消息的 msg_key: 后续会话列表里出现同一条时直接跳过,
+                    # 即使 sender_uid 判断失效也不会把机器人的回复当新消息处理
+                    self._remember_msg((data.get("data") or {}).get("msg_key"))
                     # 广播 message_sent 事件
                     if self.plugin_loader:
                         self.plugin_loader.emit_event('message_sent', {
@@ -632,6 +637,7 @@ class SimpleBilibiliReply:
                     
                     if data.get("code") == 0:
                         print(f"{Fore.GREEN}✓ [{self.account_name}] 成功发送图片给 {Fore.MAGENTA}{receiver_id}")
+                        self._remember_msg((data.get("data") or {}).get("msg_key"))
                         # 广播 message_sent 事件
                         if self.plugin_loader:
                             self.plugin_loader.emit_event('message_sent', {
@@ -655,6 +661,23 @@ class SimpleBilibiliReply:
     def generate_rid(self) -> str:
         return wbi.get().get("data").get("w_rid")
 
+    def is_own_message(self, sender_uid, talker_id=None) -> bool:
+        """判断是否为当前账号自己发出的消息
+
+        B 站接口偶尔把 uid 返回成字符串、偶尔返回成数字，这里统一转字符串比较；
+        talker_id 等于自己时说明是"自己和自己"的会话，同样不处理，
+        否则机器人（含 AI 自动回复）会把自己的回复当成新私信，形成自我回复死循环。
+        """
+        own = str(self.self_uid or "").strip()
+        if not own or own == "0":
+            return False
+        for value in (sender_uid, talker_id):
+            if value is None:
+                continue
+            if str(value).strip() == own:
+                return True
+        return False
+
     def process_messages(self):
         """处理消息"""
         try:
@@ -672,7 +695,8 @@ class SimpleBilibiliReply:
                     timestamp = last_msg.get("timestamp", 0)
                     receiver_id = last_msg.get("receiver_id")
                     
-                    if sender_uid == int(self.self_uid): # 判断是否是自己的消息
+                    if self.is_own_message(sender_uid, talker_id):
+                        # 自己发出的消息（手动回复 / AI 自动回复）一律不处理，避免自我回复死循环
                         continue
                     
                     if not msg_id or msg_id in self.processed_msg_ids: # 判断是否已回复

@@ -19,6 +19,7 @@ AI 私信自动回复插件
 
 面板访问前缀: /api/plugins/api/bilibot_plugins_ai_autoreply
 """
+import collections
 import json
 import queue
 import re
@@ -64,6 +65,9 @@ NON_TEXT_HINTS = ("[图片]", "[表情]", "[语音]", "[视频]", "[分享]", "[
 MAX_QUEUE_SIZE = 200
 MAX_HISTORY_ROWS = 2000
 
+# 自己发出消息的"回声"保护窗口（秒）：机器人/AI 刚发出的内容在窗口内再次收到时直接丢弃
+SELF_ECHO_WINDOW = 300
+
 
 class LLMError(Exception):
     """大模型调用异常"""
@@ -72,7 +76,7 @@ class LLMError(Exception):
 class Plugin(plugin_dev.APIPlugin):
     def __init__(self, bot_manager=None, config_manager=None, plugin_config=None):
         super().__init__(bot_manager, config_manager, plugin_config)
-        self.version = "1.0.0"
+        self.version = "1.0.1"
 
         self._stats = {
             "ai_calls": 0,
@@ -87,6 +91,11 @@ class Plugin(plugin_dev.APIPlugin):
         self._worker = None
         self._cooldown = {}          # uid -> 上次回复时间戳（内存加速，DB 为准）
         self._lock = threading.Lock()
+        # 自己刚发出消息的“回声”记录: (uid, 文本, 时间戳)
+        # B 站会话列表会把机器人自己发出的私信再次返回，如果不拦住，
+        # AI 会把回复当成粉丝的新提问继续回答，形成自我对话死循环。
+        self._sent_echo = collections.deque(maxlen=200)
+        self._echo_lock = threading.Lock()
 
         # 对话上下文
         self.database.create_table("chat_memory", {
@@ -343,6 +352,18 @@ class Plugin(plugin_dev.APIPlugin):
         if not uid:
             return None
 
+        # 双重自我保护：自己的消息、以及自己刚发出的回复“回声”一律不处理
+        own_uid = self._own_uid(account_name)
+        if own_uid:
+            sender = str(message_data.get("sender_uid") or "").strip()
+            talker = str(message_data.get("talker_id") or "").strip()
+            if sender == own_uid or talker == own_uid:
+                self.logger.info("忽略自己发出的私信（uid=%s）: %s" % (uid, content[:40]))
+                return None
+        if self._is_echo(uid, content):
+            self.logger.info("忽略自己回复的回声（uid=%s）: %s" % (uid, content[:40]))
+            return None
+
         # 去重：同一条私信只处理一次（本插件会自行发送，不靠主循环记忆）
         dedupe_key = "%s:%s" % (account_name, message_data.get("msg_id") or "")
         if message_data.get("msg_id") and self._seen_msg(dedupe_key):
@@ -396,6 +417,45 @@ class Plugin(plugin_dev.APIPlugin):
             if getattr(bot, "account_name", None) == account_name:
                 return bot
         return bots[0] if bots else None
+
+    def _own_uid(self, account_name):
+        """当前账号自己的 uid（字符串）；取不到时返回空字符串"""
+        bots = list(self.get_bot_accounts() or [])
+        bot = None
+        for item in bots:
+            if getattr(item, "account_name", None) == account_name:
+                bot = item
+                break
+        if bot is None and not account_name and len(bots) == 1:
+            bot = bots[0]
+        if bot is None:
+            return ""
+        uid = str(getattr(bot, "self_uid", "") or "").strip()
+        return "" if uid in ("", "0") else uid
+
+    def _remember_sent(self, uid, text):
+        """记录自己刚发出的回复，供回声过滤使用"""
+        uid = str(uid or "").strip()
+        text = re.sub(r"\s+", "", str(text or ""))
+        if not uid or not text:
+            return
+        with self._echo_lock:
+            self._sent_echo.append((uid, text, time.time()))
+
+    def _is_echo(self, uid, content):
+        """判断是否为自己刚发出、又被会话列表回传的消息"""
+        uid = str(uid or "").strip()
+        content = re.sub(r"\s+", "", str(content or ""))
+        if not uid or not content:
+            return False
+        now = time.time()
+        with self._echo_lock:
+            while self._sent_echo and now - self._sent_echo[0][2] > SELF_ECHO_WINDOW:
+                self._sent_echo.popleft()
+            for sent_uid, sent_text, _ in self._sent_echo:
+                if sent_uid == uid and sent_text == content:
+                    return True
+        return False
 
     def _seen_msg(self, key):
         row = self.database.fetch_one(
@@ -536,10 +596,14 @@ class Plugin(plugin_dev.APIPlugin):
             self.logger.error("发送失败: 找不到账号 %s" % job.get("account_name"))
             return False
         try:
-            return bool(bot.send_message(int(job["uid"]), text))
+            ok = bool(bot.send_message(int(job["uid"]), text))
         except Exception as e:
             self.logger.error("发送私信异常: %s" % e)
             return False
+        if ok:
+            # 记下来，稍后会话列表回传这条消息时直接丢弃
+            self._remember_sent(job["uid"], text)
+        return ok
 
     # ---------- 上下文 / 记录 ----------
 
