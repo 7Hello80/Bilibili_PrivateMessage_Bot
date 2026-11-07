@@ -1609,8 +1609,6 @@ class Plugin(plugin_dev.APIPlugin):
             self._stats["skipped"] += 1
             self._stats["keyword_replies"] += 1
             self._log_reply(job, text, "keyword", latency, 1, "keyword_dry_run")
-            self.logger.info("[dry-run] 关键词规则命中评论 %s，将回复: %s" % (
-                job.get("rpid"), text[:80]))
             self._log_scan("info", "[dry-run] 关键词规则将回复评论 %s: %s" % (
                 job.get("rpid"), text[:80]))
             return
@@ -1621,8 +1619,6 @@ class Plugin(plugin_dev.APIPlugin):
             self._stats["replies_sent"] += 1
             self._log_reply(job, text, "keyword", latency, 1, "keyword")
             self._cooldown[str(job.get("mid") or "")] = time.time()
-            self.logger.info("关键词规则已回复评论 %s: %s" % (
-                job.get("rpid"), text[:80]))
             self._log_scan("info", "关键词规则已回复评论 %s: %s" % (
                 job.get("rpid"), text[:80]))
         else:
@@ -1688,7 +1684,6 @@ class Plugin(plugin_dev.APIPlugin):
         if self._bool(cfg.get("dry_run")):
             self._stats["skipped"] += 1
             self._log_reply(job, text, model, latency, 1, "dry_run")
-            self.logger.info("[dry-run] 将回复评论 %s: %s" % (job.get("rpid"), text[:80]))
             self._log_scan("info", "[dry-run] 将回复评论 %s: %s" % (
                 job.get("rpid"), text[:80]))
             return
@@ -1698,8 +1693,6 @@ class Plugin(plugin_dev.APIPlugin):
             self._stats["replies_sent"] += 1
             self._log_reply(job, text, model, latency, 1, "sent")
             self._cooldown[str(job.get("mid") or "")] = time.time()
-            self.logger.info("已回复评论 %s（%sms）: %s" % (
-                job.get("rpid"), latency, text[:80]))
             self._log_scan("info", "已回复评论 %s（%sms）: %s" % (
                 job.get("rpid"), latency, text[:80]))
         else:
