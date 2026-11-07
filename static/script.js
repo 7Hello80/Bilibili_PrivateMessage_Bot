@@ -5165,6 +5165,8 @@ const CM_REPLY_DEFAULTS = {
         trigger_keywords: [],
         ignore_keywords: [],
         ignore_uids: [],
+        keyword_rules: [],
+        keyword_only: false,
         cooldown_seconds: 60,
         max_replies_per_day: 100,
         max_replies_per_scan: 20,
@@ -5191,6 +5193,19 @@ async function commentReplyRequest(path, options) {
         throw new Error(resp.status === 503 ? '机器人未运行，插件接口不可用（请先在控制台启动机器人）' : msg);
     }
     return data;
+}
+
+// 把后端规范化的关键词规则还原成「关键词1;关键词2 => 回复内容」多行文本
+function cmRulesToText(rules) {
+    if (!Array.isArray(rules)) return '';
+    return rules.map(rule => {
+        if (typeof rule === 'string') return rule;
+        if (!rule || typeof rule !== 'object') return '';
+        const words = Array.isArray(rule.keywords) ? rule.keywords.join(';') : String(rule.keywords || '');
+        const reply = String(rule.reply || '').replace(/\n/g, ' ');
+        const head = (rule.match === 'exact' ? '=' : '') + words;
+        return head + ' => ' + reply;
+    }).filter(Boolean).join('\n');
 }
 
 // 把后端规范化的评论区列表还原成易读的多行文本
@@ -5234,6 +5249,7 @@ function commentReplyFillForm(cfg) {
     toggle('cm-reply-onlymention', cfg.comment.only_mention);
     toggle('cm-reply-firstscan', cfg.comment.reply_on_first_scan);
     toggle('cm-reply-prefixat', cfg.comment.prefix_at);
+    toggle('cm-reply-keywordonly', cfg.comment.keyword_only);
 
     aiSetValue('cm-reply-interval', cfg.comment.poll_interval_seconds);
     aiSetValue('cm-reply-sendinterval', cfg.comment.send_interval_seconds);
@@ -5247,6 +5263,7 @@ function commentReplyFillForm(cfg) {
     aiSetValue('cm-reply-ignores', (cfg.comment.ignore_keywords || []).join(';'));
     aiSetValue('cm-reply-ignoreuids', (cfg.comment.ignore_uids || []).join(';'));
     aiSetValue('cm-reply-fallback', cfg.comment.fallback_reply);
+    aiSetValue('cm-reply-rules', cmRulesToText(cfg.comment.keyword_rules));
     aiSetValue('cm-reply-videos', cmVideosToText(cfg.comment.videos));
 
     const keyHint = document.getElementById('cm-llm-key-hint');
@@ -5280,6 +5297,12 @@ function commentReplyCollect() {
             only_mention: checked('cm-reply-onlymention'),
             reply_on_first_scan: checked('cm-reply-firstscan'),
             prefix_at: checked('cm-reply-prefixat'),
+            keyword_only: checked('cm-reply-keywordonly'),
+            keyword_rules: String(aiGetValue('cm-reply-rules') || '')
+                .split('\n')
+                .map(line => line.trim())
+                .filter(line => line && line.charAt(0) !== '#')
+                .join('\n'),
             poll_interval_seconds: aiGetNumber('cm-reply-interval', 120),
             send_interval_seconds: aiGetNumber('cm-reply-sendinterval', 8),
             cooldown_seconds: aiGetNumber('cm-reply-cooldown', 60),
@@ -5362,6 +5385,9 @@ async function commentReplySave() {
         }
         if (data.comment && data.comment.videos) {
             aiSetValue('cm-reply-videos', cmVideosToText(data.comment.videos));
+        }
+        if (data.comment && data.comment.keyword_rules) {
+            aiSetValue('cm-reply-rules', cmRulesToText(data.comment.keyword_rules));
         }
         await commentReplyLoadStats();
     } catch (e) {
@@ -5523,9 +5549,10 @@ async function commentReplyLoadHistory() {
         list.innerHTML = items.map(item => {
             const note = String(item.note || '');
             const isError = !item.ok;
-            const isDry = note === 'dry_run';
+            const isDry = note === 'dry_run' || note === 'keyword_dry_run';
+            const isKeyword = note.indexOf('keyword') === 0;
             const tagClass = isError ? 'is-error' : (isDry ? 'is-dry' : 'is-ok');
-            const tagText = isError ? '失败' : (isDry ? '预览' : '已发送');
+            const tagText = isError ? '失败' : (isDry ? '预览' : (isKeyword ? '关键词' : '已发送'));
             const itemClass = isError ? 'is-error' : (isDry ? 'is-dry' : '');
             const who = item.uname ? (item.uname + '（UID ' + item.mid + '）') : ('UID ' + (item.mid || ''));
             const target = (item.title || '') + ' · ' + typeName(item.type) + ' ' + (item.oid || '');
@@ -5535,7 +5562,7 @@ async function commentReplyLoadHistory() {
                 <div class="ai-history-head">
                     <span class="ai-history-tag ${tagClass}">${tagText}</span>
                     <span>${aiEscape(who)}</span>
-                    ${item.model ? '<span>' + aiEscape(item.model) + '</span>' : ''}
+                    ${item.model ? '<span>' + aiEscape(item.model === 'keyword' ? '关键词规则' : item.model) + '</span>' : ''}
                     ${item.latency_ms ? '<span>' + aiEscape(item.latency_ms + 'ms') + '</span>' : ''}
                     <span style="margin-left:auto">${aiEscape(item.time || '')}</span>
                 </div>

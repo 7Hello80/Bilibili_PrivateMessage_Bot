@@ -20,6 +20,8 @@
         "trigger_keywords": [],
         "ignore_keywords": [],
         "ignore_uids": [],
+        "keyword_rules": [],
+        "keyword_only": false,
         "cooldown_seconds": 60,
         "max_replies_per_day": 100,
         "max_replies_per_scan": 20,

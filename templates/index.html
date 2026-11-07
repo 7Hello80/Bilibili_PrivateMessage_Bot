@@ -1078,6 +1078,16 @@
                             </div>
                             <div class="ai-switch-row">
                                 <div>
+                                    <strong>仅使用关键词规则（不调用大模型）</strong>
+                                    <p class="field-hint">开启后未命中任何规则的评论直接跳过；命中规则时发送下面的固定内容</p>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="cm-reply-keywordonly">
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+                            <div class="ai-switch-row">
+                                <div>
                                     <strong>首次扫描也回复历史评论</strong>
                                     <p class="field-hint">默认关闭：第一次扫描只记录基线，避免把旧评论全部回一遍</p>
                                 </div>
@@ -1098,6 +1108,15 @@
                             </div>
 
                             <div class="form-grid mt-4">
+                                <div class="field span-2">
+                                    <label class="field-label" for="cm-reply-rules">自定义关键词 → 回复内容</label>
+                                    <textarea id="cm-reply-rules" class="textarea" rows="6"
+                                              placeholder="求教程;怎么学 => 教程在这期视频里，可以先看看简介～&#10;=已三连 => 感谢三连！有问题随时评论～&#10;# 行首加 = 表示整条评论完全匹配，命中即用固定回复"></textarea>
+                                    <p class="field-hint">
+                                        每行一条，格式「关键词1;关键词2 =&gt; 回复内容」，命中任意关键词即发送固定回复，优先于大模型；
+                                        行首加 <code>=</code> 表示整条评论完全匹配；可用 <code>{nick}</code> 插入评论者昵称、<code>{title}</code> 插入评论区标题。
+                                    </p>
+                                </div>
                                 <div class="field">
                                     <label class="field-label" for="cm-reply-interval">扫描间隔（秒）</label>
                                     <input type="number" id="cm-reply-interval" class="input" min="30" max="3600" step="10" value="120">
@@ -1188,6 +1207,7 @@
                                 <p>建议先用「预览模式」跑一段时间，确认回复质量后再关闭预览真正发送。</p>
                                 <p>首次扫描只记录当前评论作为基线，不会回复历史评论；重置基线后同样如此。</p>
                                 <p>插件只会回复<b>一级评论</b>，不会进入楼中楼，避免刷屏和触发风控。</p>
+                                <p>配置了「关键词 → 回复内容」规则时，命中的评论直接发送固定内容，不消耗大模型额度；开启「仅使用关键词规则」后，未命中的评论不回复。</p>
                             </div>
                         </div>
                     </div>

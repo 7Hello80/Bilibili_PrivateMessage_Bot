@@ -60,6 +60,8 @@ DEFAULT_CONFIG = {
         "trigger_keywords": [],
         "ignore_keywords": [],
         "ignore_uids": [],
+        "keyword_rules": [],
+        "keyword_only": False,
         "cooldown_seconds": 60,
         "max_replies_per_day": 100,
         "max_replies_per_scan": 20,
@@ -127,6 +129,7 @@ class Plugin(plugin_dev.APIPlugin):
             "replies_sent": 0,
             "failed": 0,
             "skipped": 0,
+            "keyword_replies": 0,
         }
         self._last_error = ""
         self._last_scan_at = 0
@@ -270,6 +273,59 @@ class Plugin(plugin_dev.APIPlugin):
         return [v for v in items if v]
 
     @staticmethod
+    def _normalise_keyword_rules(value):
+        """把关键词规则统一为 [{"keywords": [...], "reply": str, "match": "contains"|"exact"}]
+
+        支持三种写法：
+        - 规则列表：[{"keywords": ["教程", "怎么"], "reply": "…", "match": "contains"}]
+        - 规则列表（简写）：[{"keyword": "教程", "content": "…"}]
+        - 多行文本：每行「关键词1;关键词2 => 回复内容」，行首加 = 表示整条评论精确匹配，
+          以 # 开头的行视为注释。
+        """
+        if isinstance(value, str):
+            items = list(value.splitlines())
+        elif isinstance(value, (list, tuple)):
+            items = list(value)
+        else:
+            items = []
+
+        rules = []
+        for item in items:
+            if isinstance(item, dict):
+                keywords = Plugin._keyword_list(
+                    item.get("keywords") or item.get("keyword"))
+                reply = str(item.get("reply") or item.get("content") or "").strip()
+                match = str(item.get("match") or "contains").strip().lower()
+                if match not in ("contains", "exact"):
+                    match = "contains"
+            else:
+                line = str(item or "").strip()
+                if not line or line.startswith("#"):
+                    continue
+                left, right = None, None
+                for sep in ("=>", "->", "|"):
+                    if sep in line:
+                        left, right = line.split(sep, 1)
+                        break
+                if left is None:
+                    continue
+                left = left.strip()
+                match = "contains"
+                if left.startswith("="):
+                    match = "exact"
+                    left = left.lstrip("=").strip()
+                keywords = Plugin._keyword_list(left)
+                reply = right.strip()
+
+            keywords = [str(kw).strip()[:40] for kw in keywords if str(kw).strip()][:20]
+            reply = reply[:500]
+            if keywords and reply:
+                rules.append({"keywords": keywords, "reply": reply, "match": match})
+            if len(rules) >= 100:
+                break
+        return rules
+
+    @staticmethod
     def _looks_local(base_url):
         base = str(base_url or "")
         return any(host in base for host in ("127.0.0.1", "localhost", "0.0.0.0", "192.168.", "10."))
@@ -279,6 +335,8 @@ class Plugin(plugin_dev.APIPlugin):
         saved = self.config.get("comment")
         if isinstance(saved, dict):
             merged.update(saved)
+        merged["keyword_rules"] = self._normalise_keyword_rules(
+            merged.get("keyword_rules"))
         return merged
 
     def _llm_cfg(self):
@@ -487,6 +545,48 @@ class Plugin(plugin_dev.APIPlugin):
         if max_chars > 0 and len(text) > max_chars:
             text = text[:max_chars].rstrip()
         return text
+
+    # ================= 关键词规则 =================
+
+    def _match_keyword_rule(self, content, cfg):
+        """按配置顺序返回第一条命中的关键词规则，没有命中返回 None"""
+        text = str(content or "").strip()
+        if not text:
+            return None
+        lower = text.lower()
+        rules = cfg.get("keyword_rules")
+        if not isinstance(rules, list):
+            rules = self._normalise_keyword_rules(rules)
+        for rule in rules:
+            if not isinstance(rule, dict):
+                continue
+            for word in rule.get("keywords") or []:
+                word = str(word or "").strip().lower()
+                if not word:
+                    continue
+                if rule.get("match") == "exact":
+                    if lower == word:
+                        return rule
+                elif word in lower:
+                    return rule
+        return None
+
+    def _render_rule_reply(self, rule, job):
+        """替换回复里的占位符：{nick} 评论者昵称、{title} 评论区标题"""
+        text = str((rule or {}).get("reply") or "")
+        values = {
+            "nick": str(job.get("uname") or ""),
+            "uname": str(job.get("uname") or ""),
+            "user": str(job.get("uname") or ""),
+            "title": str(job.get("title") or ""),
+        }
+
+        def replace(match):
+            key = match.group(1).strip().lower()
+            return values.get(key, match.group(0))
+
+        text = re.sub(r"\{(\w+)\}", replace, text)
+        return self._clean_reply(text, 500)
 
     # ================= 账号 / 请求 =================
 
@@ -870,6 +970,9 @@ class Plugin(plugin_dev.APIPlugin):
             if not re.search(r"@[^\s@]{1,30}", content):
                 return "未 @UP 且未命中关键词"
 
+        if self._bool(cfg.get("keyword_only")) and self._match_keyword_rule(content, cfg) is None:
+            return "未命中关键词规则（仅关键词模式）"
+
         if not self._check_cooldown(row.get("mid"), cfg):
             return "用户冷却中"
         if not self._under_daily_limit(cfg):
@@ -941,7 +1044,8 @@ class Plugin(plugin_dev.APIPlugin):
     def _replies_today(self):
         row = self.database.fetch_one(
             "SELECT COUNT(*) FROM comment_reply_log "
-            "WHERE ok = 1 AND note = 'sent' AND created_at >= ?",
+            "WHERE ok = 1 AND (note = 'sent' OR note = 'keyword' OR note LIKE 'fallback_%') "
+            "AND created_at >= ?",
             (self._day_start(),))
         return int(row[0]) if row else 0
 
@@ -968,8 +1072,44 @@ class Plugin(plugin_dev.APIPlugin):
                 self._last_error = str(e)
                 self.logger.error("评论回复任务异常: %s" % e)
 
+    def _process_rule_job(self, job, cfg, rule):
+        """命中关键词规则：直接使用固定回复内容，不调用大模型"""
+        started = time.time()
+        text = self._render_rule_reply(rule, job)
+        latency = int((time.time() - started) * 1000)
+        if not text:
+            self._stats["failed"] += 1
+            self._last_error = "关键词规则回复内容为空"
+            self._log_reply(job, "", "keyword", latency, 0, "empty_keyword_reply")
+            return
+
+        if self._bool(cfg.get("dry_run")):
+            self._stats["skipped"] += 1
+            self._stats["keyword_replies"] += 1
+            self._log_reply(job, text, "keyword", latency, 1, "keyword_dry_run")
+            self.logger.info("[dry-run] 关键词规则命中评论 %s，将回复: %s" % (
+                job.get("rpid"), text[:80]))
+            return
+
+        ok, note = self._send_reply(job, text)
+        if ok:
+            self._stats["keyword_replies"] += 1
+            self._stats["replies_sent"] += 1
+            self._log_reply(job, text, "keyword", latency, 1, "keyword")
+            self._cooldown[str(job.get("mid") or "")] = time.time()
+            self.logger.info("关键词规则已回复评论 %s: %s" % (
+                job.get("rpid"), text[:80]))
+        else:
+            self._stats["failed"] += 1
+            self._log_reply(job, text, "keyword", latency, 0, note)
+
     def _process_job(self, job):
         cfg = self._comment_cfg()
+        rule = self._match_keyword_rule(job.get("content"), cfg)
+        if rule:
+            self._process_rule_job(job, cfg, rule)
+            return
+
         llm = self._llm_cfg()
         max_chars = self._to_int(llm.get("max_reply_chars"), 150)
         started = time.time()
@@ -1155,13 +1295,16 @@ class Plugin(plugin_dev.APIPlugin):
         incoming_comment = self._p(data, "comment")
         if isinstance(incoming_comment, dict):
             for field in ("enabled", "dry_run", "only_mention",
-                          "reply_on_first_scan", "prefix_at"):
+                          "reply_on_first_scan", "prefix_at", "keyword_only"):
                 if field in incoming_comment:
                     comment[field] = self._bool(
                         incoming_comment.get(field), bool(comment.get(field)))
             for field in ("trigger_keywords", "ignore_keywords", "ignore_uids", "accounts"):
                 if field in incoming_comment:
                     comment[field] = self._keyword_list(incoming_comment.get(field))
+            if "keyword_rules" in incoming_comment:
+                comment["keyword_rules"] = self._normalise_keyword_rules(
+                    incoming_comment.get("keyword_rules"))
             if "videos" in incoming_comment:
                 comment["videos"] = self._normalise_videos(incoming_comment.get("videos"))
             for field, low, high in (
@@ -1190,9 +1333,12 @@ class Plugin(plugin_dev.APIPlugin):
         self.logger.info("评论回复配置已更新: enabled=%s, dry_run=%s, videos=%s" % (
             comment.get("enabled"), comment.get("dry_run"),
             len(self._normalise_videos(comment.get("videos")))))
+        message = "配置已保存并生效"
+        if comment.get("keyword_only") and not comment.get("keyword_rules"):
+            message += "；注意：已开启仅关键词模式但没有配置规则，所有评论都会被跳过"
         return {
             "success": True,
-            "message": "配置已保存并生效",
+            "message": message,
             "comment": dict(comment, videos=self._normalise_videos(comment.get("videos"))),
         }
 
@@ -1226,6 +1372,9 @@ class Plugin(plugin_dev.APIPlugin):
             "failed": self._stats["failed"],
             "skipped": self._stats["skipped"],
             "replies_today": self._replies_today(),
+            "keyword_replies": self._stats.get("keyword_replies", 0),
+            "keyword_rules": len(cfg.get("keyword_rules") or []),
+            "keyword_only": bool(cfg.get("keyword_only")),
             "last_error": self._last_error,
             "last_scan_at": self._last_scan_at,
             "last_scan_time": time.strftime(
@@ -1278,7 +1427,8 @@ class Plugin(plugin_dev.APIPlugin):
     def api_history_clear(self, data):
         self.database.execute("DELETE FROM comment_reply_log")
         self._stats.update({"ai_calls": 0, "replies_sent": 0, "failed": 0,
-                            "skipped": 0, "scanned": 0, "queued": 0})
+                            "skipped": 0, "scanned": 0, "queued": 0,
+                            "keyword_replies": 0})
         self._last_error = ""
         return {"success": True, "message": "回复记录已清空"}
 
@@ -1300,6 +1450,9 @@ class Plugin(plugin_dev.APIPlugin):
             "模型: %s（%s）" % (stats["model"] or "未配置",
                               "可用" if stats["llm_ready"] else "未就绪"),
             "评论区: %s 个，排队: %s 条" % (stats["videos"], stats["queue_size"]),
+            "关键词规则: %s 条%s" % (
+                stats["keyword_rules"],
+                "（仅关键词模式，未命中不回复）" if stats["keyword_only"] else ""),
             "今日回复: %s 次 / 上限 %s" % (
                 stats["replies_today"], stats["max_replies_per_day"]),
             "累计: 成功 %s，失败 %s，跳过 %s" % (
